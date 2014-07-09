@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,8 +12,9 @@ typedef struct {
 
 typedef enum {
   TSCFG_OK,
-  TSCFG_ERR_ARG, /* Invalid argument */
-  TSCFG_ERR_SYNTAX,
+  TSCFG_ERR_ARG, /* Invalid argument to function */
+  TSCFG_ERR_OOM, /* Out of memory */
+  TSCFG_ERR_SYNTAX, /* Invalid syntax in input */
   TSCFG_ERR_UNKNOWN,
   TSCFG_ERR_UNIMPL,
 } tscfg_rc;
@@ -22,7 +24,16 @@ typedef enum {
 } tscfg_fmt;
 
 typedef struct {
+  char *str;
+  size_t length;
+} ts_tok;
+
+typedef struct {
   FILE* in;
+
+  ts_tok *toks;
+  int toks_size;
+  int ntoks;
 } ts_parse_state;
 
 void tscfg_report_err(const char *fmt, ...);
@@ -35,6 +46,8 @@ void tscfg_report_err_v(const char *fmt, va_list args);
 #define TSCFG_CHECK_GOTO(rc, label) { \
   if ((rc) != TSCFG_OK) goto label; }
 
+#define TSCFG_CHECK_MALLOC(ptr) { \
+  if ((ptr) == NULL) return TSCFG_ERR_OOM; }
 tscfg_rc parse_ts_config(FILE *in, tscfg_fmt fmt, ts_config *cfg);
 tscfg_rc parse_hocon(FILE *in, ts_config *cfg);
 
@@ -44,10 +57,13 @@ void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
 tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
-tscfg_rc ts_parse_peek(ts_parse_state *state, char *buf, int len, int *got);
-tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str, int len,                                bool *match);
+tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
+                       int count, int *got);
+tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
+                               size_t len, bool *match);
 
-static tscfg_rc eat(ts_parse_state *state, int len);
+static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok);
+static tscfg_rc pop_toks(ts_parse_state *state, int count);
 static tscfg_rc eat_json_whitespace(ts_parse_state *state);
 static bool is_json_whitespace(char c);
 
@@ -79,8 +95,6 @@ tscfg_rc parse_ts_config(FILE *in, tscfg_fmt fmt, ts_config *cfg) {
 }
 
 tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
-  // TODO: buffering
-  // TODO: init state
   ts_parse_state state;
   tscfg_rc rc = TSCFG_ERR_UNKNOWN;
 
@@ -96,7 +110,7 @@ tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
-    rc = eat(&state, 1);
+    rc = pop_toks(&state, 1);
     TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
@@ -111,13 +125,16 @@ tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
     bool close_brace;
     rc = ts_parse_next_matches(&state, "}", 1, &close_brace);
     TSCFG_CHECK_GOTO(rc, cleanup);
+
     if (!close_brace) {
       ts_parse_report_err(&state, "Expected close brace to match initial "
                                     "open");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
-
+    
+    rc = pop_toks(&state, 1);
+    TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
   rc = TSCFG_OK;
@@ -140,7 +157,13 @@ tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
 
 tscfg_rc ts_parse_state_init(ts_parse_state *state, FILE* in) {
   state->in = in;
-  // TODO: setup buffers, etc
+  // TODO: additional buffering?
+  
+  state->toks_size = 1;
+  state->toks = malloc(sizeof(state->toks[0]) * (size_t)state->toks_size);
+  TSCFG_CHECK_MALLOC(state->toks);
+  state->ntoks = 0;
+
   return TSCFG_OK;
 }
 
@@ -157,28 +180,49 @@ void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
 }
 
 /*
- * Peek ahead into input stream
- * len: number of characters to look ahead
- * got: number of characters got, less than len iff end of file
+ * Peek ahead into tokens without removing
+ * count: number of tokens to look ahead
+ * got: number of tokesn got, less than len iff end of file
  */
-tscfg_rc ts_parse_peek(ts_parse_state *state, char *buf, int len, int *got) {
-  // TODO
-  // TODO: WILL NEED TO HANDLE COMMENTS
-  return TSCFG_ERR_UNIMPL;
+tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
+                       int count, int *got) {
+  tscfg_rc rc;
+
+  // Resize token buffer to be large enough
+  if (count > state->toks_size) {
+    void *tmp = realloc(state->toks,
+            sizeof(state->toks[0]) * (size_t)count);
+    TSCFG_CHECK_MALLOC(tmp);
+    
+    state->toks_size = count;
+  }
+
+  while (state->ntoks < count) {
+    rc = read_tok(state, &state->toks[state->ntoks]);
+    TSCFG_CHECK(rc);
+
+    state->ntoks++;
+  }
+
+  *got = state->ntoks < count ? state->ntoks : count;
+  memcpy(toks, state->toks, sizeof(toks[0]) * (size_t)*got);
+  return TSCFG_OK;
 }
 
 /*
- * Check if upcoming part of input stream matches string.
+ * Check if next token matches.
  */
-tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str, int len,                                bool *match) {
-  char buf[len];
+tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
+                               size_t len, bool *match) {
   int got;
-  tscfg_rc rc = ts_parse_peek(state, buf, len, &got);
+  ts_tok tok;
+  tscfg_rc rc = ts_parse_peek(state, &tok, 1, &got);
   TSCFG_CHECK(rc);
 
-  if (got < len) {
+  if (got == 0) {
     *match = false;
-  } else if (memcmp(str, match, (size_t)len) != 0) {
+  } else if (len == tok.length &&
+          memcmp(tok.str, match, len) != 0) {
     *match = false;
   } else {
     *match = true;
@@ -188,10 +232,27 @@ tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str, int len, 
 }
 
 /*
- * Remove leading characters from input.
+ * Remove leading tokens from input.
  */
-static tscfg_rc eat(ts_parse_state *state, int len) {
+static tscfg_rc pop_toks(ts_parse_state *state, int count) {
   // TODO: implement
+  assert(count >= 0);
+
+  if (count > state->ntoks) {
+    tscfg_report_err("Popping more tokens than present");
+    return TSCFG_ERR_ARG;
+  }
+
+  memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
+  state->ntoks -= count;
+  return TSCFG_OK;
+}
+
+/*
+  Read the next token from the input stream.
+ */
+static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok) {
+  // TODO: implement lexing logic here
   return TSCFG_ERR_UNIMPL;
 }
 
@@ -200,21 +261,21 @@ static tscfg_rc eat(ts_parse_state *state, int len) {
  */
 static tscfg_rc eat_json_whitespace(ts_parse_state *state) {
   while (true) {
-    char c;
-    int got;
-    tscfg_rc rc = ts_parse_peek(state, &c, 1, &got);
-    TSCFG_CHECK(rc);
+    // TODO: better approach to reading
+    int c = getc(state->in);
 
-    if (got == 0) {
+    if (c == EOF) {
+      // TODO: check for other error
       // End of file
       break; 
     }
 
-    assert(got == 1);
-    if (is_json_whitespace(c)) {
-      rc = eat(state, 1);
-      TSCFG_CHECK(rc);
-    } else {
+    if (!is_json_whitespace((char)c)) {
+      int tmp = ungetc(c, state->in);
+      if (tmp != c) {
+        tscfg_report_err("Error pushing char back on stream.");
+        return TSCFG_ERR_UNKNOWN;
+      }
       break;
     }
   }

@@ -1,3 +1,14 @@
+/*
+ * C parser for HOCON properties.
+ *
+ * For HOCON reference: https://github.com/typesafehub/config
+ *
+ * Author: Tim Armstrong
+ * tim.g.armstrong@gmail.com
+ * Created: 9 July 2014
+ * All rights reserved.
+ */
+
 #include <assert.h>
 
 #include <stdarg.h>
@@ -62,7 +73,7 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
                                size_t len, bool *match);
 
-static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok);
+static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok, bool *eof);
 static tscfg_rc pop_toks(ts_parse_state *state, int count);
 static tscfg_rc eat_json_whitespace(ts_parse_state *state);
 static bool is_json_whitespace(char c);
@@ -101,10 +112,6 @@ tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
   rc = ts_parse_state_init(&state, in);
   TSCFG_CHECK_GOTO(rc, cleanup);
   
-  // TODO: probably need to do standard lexer/parser design
-  rc = eat_json_whitespace(&state);
-  TSCFG_CHECK_GOTO(rc, cleanup);
-
   bool open_brace;
   rc = ts_parse_next_matches(&state, "{", 1, &open_brace);
   TSCFG_CHECK_GOTO(rc, cleanup);
@@ -114,14 +121,11 @@ tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
     TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
-  // TODO: body of JSON
+  // body of JSON
   rc = parse_hocon_body(&state, cfg);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
-    rc = eat_json_whitespace(&state);
-    TSCFG_CHECK_GOTO(rc, cleanup);
-      
     bool close_brace;
     rc = ts_parse_next_matches(&state, "}", 1, &close_brace);
     TSCFG_CHECK_GOTO(rc, cleanup);
@@ -135,6 +139,15 @@ tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
     
     rc = pop_toks(&state, 1);
     TSCFG_CHECK_GOTO(rc, cleanup);
+  }
+
+  ts_tok tok;
+  int got;
+  rc = ts_parse_peek(&state, &tok, 1, &got);
+  if (got != 0) {
+    assert(got == 1);
+    ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
+                             (int)tok.length, tok.str); 
   }
 
   rc = TSCFG_OK;
@@ -152,6 +165,15 @@ cleanup:
  */
 tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
   // TODO: implement
+  // K/V pair:
+  // ---------
+  // * quoted or unquoted key token
+  // * separator: ':', '=', or not needed if open brace
+  // * value: nested object, or token or expression, or multiple tokens
+  // * optional comma - not needed if line separator
+  // Include:
+  // --------
+  // * include file and merge object
   return TSCFG_ERR_UNIMPL;
 }
 
@@ -198,8 +220,13 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
   }
 
   while (state->ntoks < count) {
-    rc = read_tok(state, &state->toks[state->ntoks]);
+    bool eof;
+    rc = read_tok(state, &state->toks[state->ntoks], &eof);
     TSCFG_CHECK(rc);
+
+    if (eof) {
+      break;
+    }
 
     state->ntoks++;
   }
@@ -251,7 +278,7 @@ static tscfg_rc pop_toks(ts_parse_state *state, int count) {
 /*
   Read the next token from the input stream.
  */
-static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok) {
+static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok, bool *eof) {
   // TODO: implement lexing logic here
   return TSCFG_ERR_UNIMPL;
 }
@@ -309,4 +336,5 @@ void tscfg_report_err(const char *fmt, ...) {
 void tscfg_report_err_v(const char *fmt, va_list args) {
   // TODO: more sophisticated logging facilities.
   vfprintf(stderr, fmt, args);
+  fputc('\n', stderr);
 }

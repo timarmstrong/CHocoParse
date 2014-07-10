@@ -12,38 +12,25 @@
 #include "tsconfig.h"
 
 #include <assert.h>
-#include <stdarg.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
+#include "tsconfig_err.h"
 #include "tsconfig_lex.h"
 
 typedef struct {
-  ts_config_input in; 
+  ts_config_input in;
 
   ts_tok *toks;
   int toks_size;
   int ntoks;
 } ts_parse_state;
 
-void tscfg_report_err(const char *fmt, ...);
-void tscfg_report_err_v(const char *fmt, va_list args);
-
-#define TSCFG_CHECK(rc) { \
-  tscfg_rc __rc = (rc);               \
-  if (__rc != TSCFG_OK) return __rc; }
-
-#define TSCFG_CHECK_GOTO(rc, label) { \
-  if ((rc) != TSCFG_OK) goto label; }
-
-#define TSCFG_CHECK_MALLOC(ptr) { \
-  if ((ptr) == NULL) return TSCFG_ERR_OOM; }
-
-tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in);
-void ts_parse_state_finalize(ts_parse_state *state);
-void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
+static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in);
+static void ts_parse_state_finalize(ts_parse_state *state);
+static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
 tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
@@ -70,7 +57,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
 
   rc = ts_parse_state_init(&state, in);
   TSCFG_CHECK_GOTO(rc, cleanup);
-  
+
   bool open_brace;
   rc = ts_parse_next_matches(&state, "{", 1, &open_brace);
   TSCFG_CHECK_GOTO(rc, cleanup);
@@ -95,7 +82,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
-    
+
     rc = pop_toks(&state, 1);
     TSCFG_CHECK_GOTO(rc, cleanup);
   }
@@ -106,7 +93,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   if (got != 0) {
     assert(got == 1);
     ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
-                             (int)tok.length, tok.str); 
+                             (int)tok.length, tok.str);
   }
 
   rc = TSCFG_OK;
@@ -136,10 +123,10 @@ tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
   return TSCFG_ERR_UNIMPL;
 }
 
-tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
+static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
   state->in = in;
   // TODO: additional buffering?
-  
+
   state->toks_size = 1;
   state->toks = malloc(sizeof(state->toks[0]) * (size_t)state->toks_size);
   TSCFG_CHECK_MALLOC(state->toks);
@@ -148,7 +135,7 @@ tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
   return TSCFG_OK;
 }
 
-void ts_parse_state_finalize(ts_parse_state *state) {
+static void ts_parse_state_finalize(ts_parse_state *state) {
   // Invalidate input
   state->in.kind = TS_CONFIG_IN_NONE;
 
@@ -159,7 +146,7 @@ void ts_parse_state_finalize(ts_parse_state *state) {
   state->ntoks = 0;
 }
 
-void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
+static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   tscfg_report_err_v(fmt, args);
@@ -180,7 +167,7 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
     void *tmp = realloc(state->toks,
             sizeof(state->toks[0]) * (size_t)count);
     TSCFG_CHECK_MALLOC(tmp);
-    
+
     state->toks_size = count;
   }
 
@@ -238,21 +225,4 @@ static tscfg_rc pop_toks(ts_parse_state *state, int count) {
   memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
   state->ntoks -= count;
   return TSCFG_OK;
-}
-
-/*
- * Put an error message in the appropriate place and return
- * code.
- */
-void tscfg_report_err(const char *fmt, ...) {
-  va_list args;
-  va_start(args, fmt);
-  tscfg_report_err_v(fmt, args);
-  va_end(args);
-}
-
-void tscfg_report_err_v(const char *fmt, va_list args) {
-  // TODO: more sophisticated logging facilities.
-  vfprintf(stderr, fmt, args);
-  fputc('\n', stderr);
 }

@@ -4,7 +4,8 @@ EXTRA_DIST = autogen.sh README.md
 
 # Include all code in library
 lib_LTLIBRARIES = lib/libtsconfig.la
-lib_libtsconfig_la_SOURCES = src/tsconfig.c src/tsconfig_lex.c
+lib_libtsconfig_la_SOURCES = src/tsconfig.c src/tsconfig_lex.c \
+  src/tsconfig_err.c
 
 bin_PROGRAMS = bin/tsconfig_test
 bin_tsconfig_test_SOURCES = src/tsconfig_test.c

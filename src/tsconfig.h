@@ -32,7 +32,7 @@ typedef enum {
 } tscfg_fmt;
 
 /*
- * Tagged union to represent possible input types for parser. 
+ * Tagged union to represent possible input types for parser.
  */
 typedef enum {
   TS_CONFIG_IN_NONE,

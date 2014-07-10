@@ -36,8 +36,8 @@ tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
 tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
-tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
-                               size_t len, bool *match);
+tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
+                       bool *match);
 
 static tscfg_rc pop_toks(ts_parse_state *state, int count);
 
@@ -59,7 +59,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   bool open_brace;
-  rc = ts_parse_next_matches(&state, "{", 1, &open_brace);
+  rc = ts_parse_next_matches(&state, TSCFG_TOK_OPEN_BRACE, &open_brace);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
@@ -73,7 +73,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
 
   if (open_brace) {
     bool close_brace;
-    rc = ts_parse_next_matches(&state, "}", 1, &close_brace);
+    rc = ts_parse_next_matches(&state, TSCFG_TOK_CLOSE_BRACE, &close_brace);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (!close_brace) {
@@ -90,8 +90,12 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   tscfg_tok tok;
   int got;
   rc = ts_parse_peek(&state, &tok, 1, &got);
-  if (got != 0) {
-    assert(got == 1);
+  assert(got == 1); // Should get at least end of file
+  if (tok.tag == TSCFG_TOK_EOF) {
+    rc = pop_toks(&state, 1);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+  } else {
+    // TODO: include token tag
     ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
                              (int)tok.length, tok.str);
   }
@@ -157,7 +161,7 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
 /*
  * Peek ahead into tokens without removing
  * count: number of tokens to look ahead
- * got: number of tokesn got, less than len iff end of file
+ * got: number of tokens got, less than len iff end of file
  */
 tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got) {
@@ -173,13 +177,14 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
   }
 
   while (state->ntoks < count) {
-    bool eof;
-    rc = tscfg_read_tok(&state->lex_state, &state->toks[state->ntoks], &eof);
-    TSCFG_CHECK(rc);
-
-    if (eof) {
+    if (state->ntoks > 0 &&
+        state->toks[state->ntoks - 1].tag == TSCFG_TOK_EOF) {
+      // Already hit end of file
       break;
     }
+
+    rc = tscfg_read_tok(&state->lex_state, &state->toks[state->ntoks]);
+    TSCFG_CHECK(rc);
 
     state->ntoks++;
   }
@@ -191,22 +196,16 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
 
 /*
  * Check if next token matches.
+ * match: set to false if no next token (EOF) or if token is different type
  */
-tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
-                               size_t len, bool *match) {
+tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
+                       bool *match) {
   int got;
   tscfg_tok tok;
   tscfg_rc rc = ts_parse_peek(state, &tok, 1, &got);
   TSCFG_CHECK(rc);
 
-  if (got == 0) {
-    *match = false;
-  } else if (len == tok.length &&
-          memcmp(tok.str, match, len) != 0) {
-    *match = false;
-  } else {
-    *match = true;
-  }
+  *match = (got == 1) && (tok.tag == tag);
 
   return TSCFG_OK;
 }
@@ -221,6 +220,14 @@ static tscfg_rc pop_toks(ts_parse_state *state, int count) {
   if (count > state->ntoks) {
     tscfg_report_err("Popping more tokens than present");
     return TSCFG_ERR_ARG;
+  }
+
+  // Cleanup memory first
+  for (int i = 0; i < count; i++) {
+    tscfg_tok *tok = &state->toks[i];
+    if (tok->str != NULL) {
+      free(tok->str);
+    }
   }
 
   memmove(&state->toks[0], &state->toks[count], state->ntoks - count);

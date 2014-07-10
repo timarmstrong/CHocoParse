@@ -18,6 +18,9 @@
 // Default amount to buffer when searching ahead
 #define LEX_PEEK_BATCH_SIZE 32
 
+static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok);
+static inline tscfg_tok_tag tag_from_char(char c);
+
 static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, int len, int *got);
 static tscfg_rc lex_read_more(tscfg_lex_state *lex, int bytes);
 static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, int bytes,
@@ -54,10 +57,10 @@ void tscfg_lex_finalize(tscfg_lex_state *lex) {
   lex->buf_len = 0;
 }
 
-/*
-  Read the next token from the input stream.
- */
-tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok, bool *eof) {
+tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
+  assert(lex != NULL);
+  assert(tok != NULL);
+
   tscfg_rc rc;
 
   // First consume any comments or whitespace
@@ -66,9 +69,76 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok, bool *eof) {
   TSCFG_CHECK(rc);
 
   // Next character should be start of token.
-  // TODO: implement lexing logic here
+  char c;
+  int got;
+  rc = lex_peek(lex, &c, 1, &got);
+  TSCFG_CHECK(rc);
 
-  return TSCFG_ERR_UNIMPL;
+  if (got == 0) {
+    set_nostr_tok(TSCFG_TOK_EOF, tok);
+    return TSCFG_OK;
+  }
+
+  switch (c) {
+    case '"':
+      // TODO: string
+      rc = lex_eat(lex, 1);
+      TSCFG_CHECK(rc);
+      return TSCFG_ERR_UNIMPL;
+    case '{':
+    case '}':
+    case '(':
+    case ')':
+    case ',':
+    case '=':
+    case ':':
+      // Single character toks
+      rc = lex_eat(lex, 1);
+      TSCFG_CHECK(rc);
+
+      set_nostr_tok(tag_from_char(c), tok);
+      return TSCFG_OK;
+    case '+':
+      // TODO: must be += operator
+      return TSCFG_ERR_UNIMPL;
+    default:
+      // TODO: other token types
+      return TSCFG_ERR_UNIMPL;
+  }
+}
+
+/*
+ * Set token without string
+ */
+static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok) {
+  tok->tag = tag;
+  tok->str = NULL;
+  tok->length = 0;
+}
+
+/*
+ * Translate single character token into tag.
+ */
+static inline tscfg_tok_tag tag_from_char(char c) {
+  switch (c) {
+    case '{':
+      return TSCFG_TOK_OPEN_BRACE;
+    case '}':
+      return TSCFG_TOK_CLOSE_BRACE;
+    case '(':
+      return TSCFG_TOK_OPEN_PAREN;
+    case ')':
+      return TSCFG_TOK_CLOSE_PAREN;
+    case ',':
+      return TSCFG_TOK_COMMA;
+    case '=':
+      return TSCFG_TOK_EQUAL;
+    case ':':
+      return TSCFG_TOK_COLON;
+    default:
+      // Should not get here
+      assert(false);
+  }
 }
 
 static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, int len, int *got) {
@@ -171,7 +241,7 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
   *read = 0;
 
   /*
-   * Look ahead two characters for // or /* or one for #
+   * Look ahead two characters for / followed by / or * or one for #
    */
   char c[2];
   int got;
@@ -248,7 +318,7 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read) {
 }
 
 /*
- * Search for end of /* comment
+ * Search for end of multiline comment
  */
 static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read) {
   tscfg_rc rc;
@@ -306,7 +376,6 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, int *read) {
   tscfg_rc rc;
 
   *read = 0;
-  ts_config_input *in = &lex->in;
 
   while (true) {
     char buf[LEX_PEEK_BATCH_SIZE];

@@ -36,7 +36,7 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
                                        char **tok, size_t *tok_len);
 
-static bool is_json_whitespace(char c);
+static bool is_hocon_whitespace(char c);
 static bool is_hocon_unquoted_char(char c);
 static bool is_comment_start(const char *buf, size_t len);
 
@@ -422,7 +422,7 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
 
     size_t ws_chars = 0;
     while (ws_chars < got &&
-           is_json_whitespace(buf[ws_chars])) {
+           is_hocon_whitespace(buf[ws_chars])) {
       ws_chars++;
     }
 
@@ -461,7 +461,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
     TSCFG_CHECK(rc);
     
     if (got == 0 || !is_hocon_unquoted_char(pos[0]) ||
-        is_json_whitespace(pos[0]) || is_comment_start(pos, got)) {
+        is_hocon_whitespace(pos[0]) || is_comment_start(pos, got)) {
       // Cases where unquoted text terminates
       break;
     } else {
@@ -478,7 +478,10 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
   return TSCFG_OK;
 }
 
-static bool is_json_whitespace(char c) {
+/*
+ * TODO: doesn't match HOCON spec
+ */
+static bool is_hocon_whitespace(char c) {
   switch (c) {
     case ' ':
     case '\t':

@@ -531,26 +531,65 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   char *str = malloc(512);
   TSCFG_CHECK_MALLOC(str);
 
+
+  bool end_of_tok = false;
   size_t len = 0;
-  while (true) {
+  do {
     size_t got;
     char *pos = &str[len];
 
-    rc = lex_peek(lex, pos, 2, &got);
+    assert(LEX_PEEK_BATCH_SIZE >= 2); // Need lookahead of at least two chars
+    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
 
-    if (got == 0 || !is_hocon_unquoted_char(pos[0]) ||
-        is_hocon_whitespace(pos[0]) || is_comment_start(pos, got)) {
-      // Cases where unquoted text terminates
-      break;
-    } else {
+    size_t to_append = 0;
+
+    // Cannot append last character b/c need to check not a comment
+    while (to_append < got) {
+      if (!is_hocon_unquoted_char(pos[to_append]) &&
+          is_hocon_whitespace(pos[to_append])) {
+        // Cases where unquoted text definitely terminates
+        end_of_tok = true;
+        break;
+      }
+
+      if (to_append < got - 1) {
+        // Can check for comment with lookahead two
+        if (is_comment_start(&pos[to_append], 2)) {
+          end_of_tok = true;
+          break;
+        }
+      } else {
+        /* Last character, may not be able to decide whether to append yet */
+        if (got < LEX_PEEK_BATCH_SIZE) {
+          // End of file, only check one char comments
+          if (is_comment_start(&pos[to_append], 1)) {
+            end_of_tok = true;
+            break;
+          }
+        } else {
+          // Need to read more before deciding
+          end_of_tok = false;
+          break;
+        }
+      }
+      
       // Next character is part of unquoted text
-      rc = lex_eat(lex, 1);
+      to_append++;
+    }
+    
+    if (to_append > 0) {
+      rc = lex_eat(lex, to_append);
       TSCFG_CHECK(rc);
 
-      len++;
+      len += to_append;
     }
-  }
+
+    if (got == 0) {
+      // End of input
+      end_of_tok = true;
+    } 
+  } while (!end_of_tok);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
   tok->length = len;

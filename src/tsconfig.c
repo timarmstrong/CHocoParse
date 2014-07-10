@@ -59,6 +59,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   rc = ts_parse_state_init(&state, in);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
+  // TODO: open square bracket also supported
   bool open_brace;
   rc = ts_parse_next_matches(&state, TSCFG_TOK_OPEN_BRACE, &open_brace);
   TSCFG_CHECK_GOTO(rc, cleanup);

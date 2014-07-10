@@ -33,7 +33,12 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read);
 
+static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
+                                       char **tok, size_t *tok_len);
+
 static bool is_json_whitespace(char c);
+static bool is_hocon_unquoted_char(char c);
+static bool is_comment_start(const char *buf, size_t len);
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, ts_config_input in) {
   lex->in = in;
@@ -91,6 +96,8 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
     case '}':
     case '(':
     case ')':
+    case '[':
+    case ']':
     case ',':
     case '=':
     case ':':
@@ -131,6 +138,10 @@ static inline tscfg_tok_tag tag_from_char(char c) {
       return TSCFG_TOK_OPEN_PAREN;
     case ')':
       return TSCFG_TOK_CLOSE_PAREN;
+    case '[':
+      return TSCFG_TOK_OPEN_SQUARE;
+    case ']':
+      return TSCFG_TOK_CLOSE_SQUARE;
     case ',':
       return TSCFG_TOK_COMMA;
     case '=':
@@ -431,6 +442,42 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
   return TSCFG_OK;
 }
 
+/*
+ * Extract unquoted text according to HOCON rules
+ */
+static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
+                                       char **tok, size_t *tok_len) {
+  tscfg_rc rc;
+  // TODO: resize tok.
+  char *str = malloc(512);
+  TSCFG_CHECK_MALLOC(str);
+
+  size_t len = 0;
+  while (true) {
+    size_t got;
+    char *pos = &str[len];
+
+    rc = lex_peek(lex, pos, 2, &got);
+    TSCFG_CHECK(rc);
+    
+    if (got == 0 || !is_hocon_unquoted_char(pos[0]) ||
+        is_json_whitespace(pos[0]) || is_comment_start(pos, got)) {
+      // Cases where unquoted text terminates
+      break;
+    } else {
+      // Next character is part of unquoted text
+      rc = lex_eat(lex, 1);
+      TSCFG_CHECK(rc);
+
+      len++;
+    }
+  }
+
+  *tok = str;
+  *tok_len = len;
+  return TSCFG_OK;
+}
+
 static bool is_json_whitespace(char c) {
   switch (c) {
     case ' ':
@@ -440,5 +487,53 @@ static bool is_json_whitespace(char c) {
       return true;
     default:
       return false;
+  }
+}
+
+/*
+ * Return true if this is a char that can appear in an unquoted string.
+ * Note that because it's valid to appear in unquoted text doesn't mean
+ * that it should be greedily appended - special cases are handled elsewhere.
+ */
+static bool is_hocon_unquoted_char(char c) {
+  switch (c) {
+    case '$':
+    case '+':
+    case '#':
+    case '`':
+    case '\\':
+    case '?':
+    case '^':
+    case '!':
+    case '@':
+    case '{':
+    case '}':
+    case '[':
+    case ']':
+    case '(':
+    case ')':
+    case '"':
+    case ':':
+    case '=':
+    case ',':
+      // Could be interpreted as start of next JSON token
+      return false;
+    default:
+      // All others can appear
+      return true;
+  }
+}
+
+/*
+ * Return true if string is start of comment
+ */
+static bool is_comment_start(const char *buf, size_t len) {
+  if (len >= 1 && buf[0] == '#') {
+    return true;
+  } else if (len >= 2 && buf[0] == '/' &&
+             (buf[1] == '/' || buf[1] == '*')) {
+    return true;
+  } else {
+    return false;
   }
 }

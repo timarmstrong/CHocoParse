@@ -9,20 +9,16 @@
  * All rights reserved.
  */
 
-#include <assert.h>
+#include "tsconfig.h"
 
+#include <assert.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
-#include "tsconfig.h"
-
-typedef struct {
-  char *str;
-  size_t length;
-} ts_tok;
+#include "tsconfig_lex.h"
 
 typedef struct {
   ts_config_input in; 
@@ -56,10 +52,7 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
                                size_t len, bool *match);
 
-static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok, bool *eof);
 static tscfg_rc pop_toks(ts_parse_state *state, int count);
-static tscfg_rc eat_json_whitespace(ts_parse_state *state);
-static bool is_json_whitespace(char c);
 
 
 tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg) {
@@ -193,7 +186,7 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
 
   while (state->ntoks < count) {
     bool eof;
-    rc = read_tok(state, &state->toks[state->ntoks], &eof);
+    rc = tscfg_read_tok(&state->in, &state->toks[state->ntoks], &eof);
     TSCFG_CHECK(rc);
 
     if (eof) {
@@ -245,56 +238,6 @@ static tscfg_rc pop_toks(ts_parse_state *state, int count) {
   memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
   state->ntoks -= count;
   return TSCFG_OK;
-}
-
-/*
-  Read the next token from the input stream.
- */
-static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok, bool *eof) {
-  // TODO: implement lexing logic here
-  return TSCFG_ERR_UNIMPL;
-}
-
-/*
- * Remove any leading whitespace characters from input.
- */
-static tscfg_rc eat_json_whitespace(ts_parse_state *state) {
-  while (true) {
-    // TODO: other inputs
-    assert(state->in.kind == TS_CONFIG_IN_FILE);
-    
-    // TODO: better approach to reading
-    int c = getc(state->in.data.f);
-
-    if (c == EOF) {
-      // TODO: check for other error
-      // End of file
-      break; 
-    }
-
-    if (!is_json_whitespace((char)c)) {
-      int tmp = ungetc(c, state->in.data.f);
-      if (tmp != c) {
-        tscfg_report_err("Error pushing char back on stream.");
-        return TSCFG_ERR_UNKNOWN;
-      }
-      break;
-    }
-  }
-
-  return TSCFG_OK;
-}
-
-static bool is_json_whitespace(char c) {
-  switch (c) {
-    case ' ':
-    case '\t':
-    case '\n':
-    case '\r':
-      return true;
-    default:
-      return false;
-  }
 }
 
 /*

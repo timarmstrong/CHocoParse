@@ -13,9 +13,20 @@ Makefile.in
 configure
 config.log
 config.status
+config.guess
+config.sub
+
+libtool
+ltmain.sh
 
 .deps
 .dirstamp
+.libs
 
+bin
 bin/*
+lib
+lib/*.la
+m4
 src/*.o
+src/*.lo

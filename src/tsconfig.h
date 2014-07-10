@@ -8,6 +8,10 @@
  * Created: 9 July 2014
  * All rights reserved.
  */
+
+#ifndef __TSCONFIG_H
+#define __TSCONFIG_H
+
 #include <stdio.h>
 
 typedef struct {
@@ -57,3 +61,5 @@ tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg);
  * Parse a typesafe config file in HOCON format.
  */
 tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg);
+
+#endif // __TSCONFIG_H

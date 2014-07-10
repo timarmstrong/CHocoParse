@@ -27,11 +27,13 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes);
 
-static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read);
+static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read,
+                                  bool *newline);
 static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read);
-static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read);
+static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
+                                  bool *newline);
 
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c, tscfg_tok *tok);
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
@@ -39,6 +41,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
                                                   tscfg_tok *tok);
 
 static bool is_hocon_whitespace(char c);
+static bool is_hocon_newline(char c);
 static bool is_hocon_unquoted_char(char c);
 static bool is_comment_start(const char *buf, size_t len);
 
@@ -74,8 +77,14 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
 
   // First consume any comments or whitespace
   size_t read = 0;
-  rc = eat_hocon_comm_ws(lex, &read);
+  bool saw_newline = false;
+  rc = eat_hocon_comm_ws(lex, &read, &saw_newline);
   TSCFG_CHECK(rc);
+
+  if (saw_newline) {
+    set_nostr_tok(TSCFG_TOK_NEWLINE, tok);
+    return TSCFG_OK;
+  }
 
   // Next character should be start of token.
   char c;
@@ -268,15 +277,23 @@ static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes) {
 
 /*
  * Consume comments and whitespace.
+ * newline: set to true if we saw at least one newline
  */
-static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read) {
+static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read,
+                                  bool *newline) {
   tscfg_rc rc;
+  *newline = false;
   size_t total_read = 0, iter_read;
   do {
     size_t ws_read = 0, comm_read = 0;
+    bool newline2;
     // Follows JSON whitespace rules
-    rc = eat_json_whitespace(lex, &ws_read);
+    rc = eat_hocon_whitespace(lex, &ws_read, &newline2);
     TSCFG_CHECK(rc);
+
+    if (newline2) {
+      *newline = true;
+    }
 
     rc = eat_hocon_comment(lex, &comm_read);
     TSCFG_CHECK(rc);
@@ -425,11 +442,14 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
 
 /*
  * Remove any leading whitespace characters from input.
+ * newline: set to true if saw at least one newline
  */
-static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
+static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
+                                  bool *newline) {
   tscfg_rc rc;
 
   *read = 0;
+  *newline = false;
 
   while (true) {
     char buf[LEX_PEEK_BATCH_SIZE];
@@ -442,6 +462,9 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
     size_t ws_chars = 0;
     while (ws_chars < got &&
            is_hocon_whitespace(buf[ws_chars])) {
+      if (is_hocon_newline(buf[ws_chars])) {
+        *newline = true;
+      }
       ws_chars++;
     }
 
@@ -674,6 +697,14 @@ static bool is_hocon_whitespace(char c) {
     default:
       return false;
   }
+}
+
+/*
+ * Return true if character is to be treated semantically as newline\
+ * according to the HOCON spec
+ */
+static inline bool is_hocon_newline(char c) {
+  return (c == '\n');
 }
 
 /*

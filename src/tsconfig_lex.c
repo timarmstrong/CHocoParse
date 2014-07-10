@@ -85,8 +85,11 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
   rc = eat_hocon_comm_ws(lex, &read, &saw_newline);
   TSCFG_CHECK(rc);
 
+  // TODO: need to accumulate whitespace into token
+  // TODO: do we need to have comment tokens??
   if (saw_newline) {
-    set_nostr_tok(TSCFG_TOK_NEWLINE, tok);
+    set_nostr_tok(TSCFG_TOK_WS_NEWLINE, tok);
+
     return TSCFG_OK;
   }
 
@@ -634,7 +637,6 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
 
   while (true) {
     assert(LEX_PEEK_BATCH_SIZE >= 4); // Look for triple quote plus one
-    
 
     // Resize more aggressively since strings are often long
     size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;

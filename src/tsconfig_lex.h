@@ -21,7 +21,9 @@ typedef enum {
   TSCFG_TOK_EOF, // Special token for end of file
 
   /* Special whitespace tokens: don't include string */
-  TSCFG_TOK_NEWLINE, // Whitespace with newline
+  // TODO: need to include whitespace data for concatenation
+  TSCFG_TOK_WS, // Whitespace without newline
+  TSCFG_TOK_WS_NEWLINE, // Whitespace with newline
 
   /* Paired punctuation tokens: don't include string */
   TSCFG_TOK_OPEN_BRACE,

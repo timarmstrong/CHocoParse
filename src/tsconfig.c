@@ -287,7 +287,8 @@ static tscfg_rc skip_whitespace(ts_parse_state *state) {
     rc = peek_tag(state, &tag);
     TSCFG_CHECK(rc);
 
-    if (tag == TSCFG_TOK_NEWLINE) {
+    if (tag == TSCFG_TOK_WS ||
+        tag == TSCFG_TOK_WS_NEWLINE) {
       pop_toks(state, 1);
     } else {
       return TSCFG_OK;

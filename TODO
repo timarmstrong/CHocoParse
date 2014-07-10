@@ -2,3 +2,6 @@ List of miscellaneous unimplemented features.
 
 * Support for UTF-8 encoding.
 * Support in lexer for treating newlines as tokens.
+* Support in lexer for whitespace tokens (e.g. between unquoted strings)
+* Support in lexer for multi-line strings
+* Error handling API

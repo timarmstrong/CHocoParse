@@ -609,11 +609,11 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
           break;
         }
       }
-      
+
       // Next character is part of unquoted text
       to_append++;
     }
-    
+
     if (to_append > 0) {
       rc = lex_eat(lex, to_append);
       TSCFG_CHECK(rc);
@@ -624,7 +624,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
     if (got == 0) {
       // End of input
       end_of_tok = true;
-    } 
+    }
   } while (!end_of_tok);
 
   tok->tag = TSCFG_TOK_UNQUOTED;

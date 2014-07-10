@@ -32,17 +32,18 @@ static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in);
 static void ts_parse_state_finalize(ts_parse_state *state);
 static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
-tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
+static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
-tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
+static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
-tscfg_rc ts_parse_next_tag(ts_parse_state *state, tscfg_tok_tag *tag);
-tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
+static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag);
+static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool *match);
 
 static void pop_toks(ts_parse_state *state, int count);
 static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
+static tscfg_rc skip_whitespace(ts_parse_state *state);
 
 tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg) {
   if (fmt == TSCFG_HOCON) {
@@ -60,9 +61,12 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   rc = ts_parse_state_init(&state, in);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
+  rc = skip_whitespace(&state);
+  TSCFG_CHECK_GOTO(rc, cleanup);
+
   // TODO: open square bracket also supported
   bool open_brace;
-  rc = ts_parse_next_matches(&state, TSCFG_TOK_OPEN_BRACE, &open_brace);
+  rc = next_tok_matches(&state, TSCFG_TOK_OPEN_BRACE, &open_brace);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
@@ -74,8 +78,11 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
+    rc = skip_whitespace(&state);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+
     bool close_brace;
-    rc = ts_parse_next_matches(&state, TSCFG_TOK_CLOSE_BRACE, &close_brace);
+    rc = next_tok_matches(&state, TSCFG_TOK_CLOSE_BRACE, &close_brace);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (!close_brace) {
@@ -88,9 +95,12 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
     pop_toks(&state, 1);
   }
 
+  rc = skip_whitespace(&state);
+  TSCFG_CHECK_GOTO(rc, cleanup);
+
   tscfg_tok tok;
   int got;
-  rc = ts_parse_peek(&state, &tok, 1, &got);
+  rc = peek_tok(&state, &tok, 1, &got);
   assert(got == 1); // Should get at least end of file
   if (tok.tag == TSCFG_TOK_EOF) {
     pop_toks(&state, 1);
@@ -113,12 +123,15 @@ cleanup:
 /*
  * Parse contents between { and }.
  */
-tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
+static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
   tscfg_rc rc;
+
+  rc = skip_whitespace(state);
+  TSCFG_CHECK(rc)
 
   // Only handle empty body for now
   tscfg_tok_tag tag;
-  rc = ts_parse_next_tag(state, &tag);
+  rc = peek_tag(state, &tag);
   TSCFG_CHECK(rc);
   if (tag == TSCFG_TOK_CLOSE_BRACE ||
       tag == TSCFG_TOK_EOF) {
@@ -175,7 +188,7 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
  * count: number of tokens to look ahead
  * got: number of tokens got, less than len iff end of file
  */
-tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
+static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got) {
   tscfg_rc rc;
 
@@ -187,6 +200,8 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
 
     state->toks_size = count;
   }
+
+
 
   while (state->ntoks < count) {
     if (state->ntoks > 0 &&
@@ -209,10 +224,10 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
 /*
  * tag: set to next tag, TSCFG_TOK_EOF if no more
  */
-tscfg_rc ts_parse_next_tag(ts_parse_state *state, tscfg_tok_tag *tag) {
+static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag) {
   tscfg_tok tok;
   int got;
-  tscfg_rc rc = ts_parse_peek(state, &tok, 1, &got);
+  tscfg_rc rc = peek_tok(state, &tok, 1, &got);
   TSCFG_CHECK(rc);
 
   if (got == 0) {
@@ -228,10 +243,10 @@ tscfg_rc ts_parse_next_tag(ts_parse_state *state, tscfg_tok_tag *tag) {
  * Check if next token matches.
  * match: set to false if no next token (EOF) or if token is different type
  */
-tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
+static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool *match) {
   tscfg_tok_tag next_tag;
-  tscfg_rc rc = ts_parse_next_tag(state, &next_tag);
+  tscfg_rc rc = peek_tag(state, &next_tag);
   TSCFG_CHECK(rc);
 
   *match = (next_tag == tag);
@@ -258,6 +273,26 @@ static void pop_toks(ts_parse_state *state, int count) {
 
   memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
   state->ntoks -= count;
+}
+
+/*
+ * Remove any leading whitespace tokens.
+ */
+static tscfg_rc skip_whitespace(ts_parse_state *state) {
+  tscfg_rc rc;
+
+  while (true) {
+    tscfg_tok_tag tag;
+
+    rc = peek_tag(state, &tag);
+    TSCFG_CHECK(rc);
+
+    if (tag == TSCFG_TOK_NEWLINE) {
+      pop_toks(state, 1);
+    } else {
+      return TSCFG_OK;
+    }
+  }
 }
 
 /*

@@ -50,6 +50,7 @@ typedef struct {
     struct {
       const char *str;
       size_t len;
+      size_t pos;
     } s;
   } data;
 } ts_config_input;

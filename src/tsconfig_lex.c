@@ -182,19 +182,38 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
   return TSCFG_OK;
 }
 
+/*
+ * Lexer read from input.
+ * read_bytes: on success, set to number of bytes read.  Only < bytes if EOF.
+ */
 static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, size_t bytes,
                          size_t *read_bytes) {
-  // TODO: other inputs
-  assert(in->kind == TS_CONFIG_IN_FILE);
+  if (in->kind == TS_CONFIG_IN_FILE) {
 
-  size_t read = fread(buf, 1, bytes, in->data.f);
-  if (read != bytes) {
-    // TODO: better error handling
-    tscfg_report_err("Error reading for input file");
-    return TSCFG_ERR_IO;
+    size_t read = fread(buf, 1, bytes, in->data.f);
+    if (read != bytes) {
+      // Need to distinguish between eof and error
+      int err_code = ferror(in->data.f);
+      if (err_code != 0) {
+        // TODO: better error handling
+        tscfg_report_err("Error reading for input file");
+        return TSCFG_ERR_IO;
+      }
+    }
+
+    *read_bytes = read;
+  } else if (in->kind == TS_CONFIG_IN_STR) {
+    assert(in->data.s.pos <= in->data.s.len);
+    size_t remaining = in->data.s.len - in->data.s.pos;
+    size_t copy_bytes = (remaining < bytes) ? remaining : bytes;
+    memcpy(buf, &in->data.s.str[in->data.s.pos], copy_bytes);
+    in->data.s.pos += copy_bytes;
+
+    *read_bytes = copy_bytes;
+  } else {
+    tscfg_report_err("Unsupported input type: %i", (int)in->kind);
+    return TSCFG_ERR_UNIMPL;
   }
-
-  *read_bytes = read;
 
   return TSCFG_OK;
 }

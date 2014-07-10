@@ -130,8 +130,10 @@ static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, int bytes,
 static tscfg_rc lex_eat(tscfg_lex_state *lex, int bytes) {
   assert(bytes >= lex->buf_len);
 
-  // Bump data forward
-  // TODO: ring buffer would be more efficient
+  /* Bump data forward
+   * Note that this is inefficient if we are frequently bumping small portions of a large
+   * buffer, since this requires moving the remainder of the buffer.
+   */
   size_t remaining = lex->buf_len - bytes;
   if (remaining > 0) {
     memmove(&lex->buf[0], &lex->buf[bytes], remaining);
@@ -146,23 +148,19 @@ static tscfg_rc lex_eat(tscfg_lex_state *lex, int bytes) {
  */
 static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read) {
   tscfg_rc rc;
-  int total_read = 0;
-  while (true) {
-    int ws_read = 0;
+  int total_read = 0, iter_read;
+  do {
+    int ws_read = 0, comm_read = 0;
     // Follows JSON whitespace rules
     rc = eat_json_whitespace(lex, &ws_read);
     TSCFG_CHECK(rc);
 
-    total_read += ws_read;
-
-    int comm_read = 0;
     rc = eat_hocon_comment(lex, &comm_read);
     TSCFG_CHECK(rc);
 
-    if (ws_read == 0 && comm_read == 0) {
-      break;
-    }
-  }
+    iter_read = ws_read + comm_read;
+    total_read += iter_read;
+  } while (iter_read > 0);
 
   return TSCFG_OK;
 }

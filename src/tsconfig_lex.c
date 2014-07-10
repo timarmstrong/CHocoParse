@@ -22,7 +22,9 @@ static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, int bytes,
 static tscfg_rc lex_eat(tscfg_lex_state *lex, int bytes);
 
 static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read);
-static tscfg_rc eat_hocon_comments(tscfg_lex_state *lex, int *read);
+static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read);
+static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read);
+static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read);
 static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, int *read);
 
 static bool is_json_whitespace(char c);
@@ -145,7 +147,7 @@ static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read) {
     total_read += ws_read;
 
     int comm_read = 0;
-    rc = eat_hocon_comments(lex, &comm_read);
+    rc = eat_hocon_comment(lex, &comm_read);
     TSCFG_CHECK(rc);
 
     if (ws_read == 0 && comm_read == 0) {
@@ -156,13 +158,123 @@ static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read) {
   return TSCFG_OK;
 }
 
-static tscfg_rc eat_hocon_comments(tscfg_lex_state *lex, int *read) {
-  // TODO: implement comment lexing
+static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
+  tscfg_rc rc;
 
-  // TODO:
-  // * look ahead two characters for // or /*
-  return TSCFG_ERR_UNIMPL;
+  *read = 0;
+
+  /*
+   * Look ahead two characters for // or /* or one for #
+   */
+  char c[2];
+  int got;
+  rc = lex_peek(lex, c, 2, &got);
+  TSCFG_CHECK(rc);
+
+  if (got >= 1 && c[0] == '#') {
+    rc = lex_eat(lex, 1);
+    TSCFG_CHECK(rc);
+    (*read)++;
+
+    int line_read = 0;
+    rc = eat_rest_of_line(lex, &line_read);
+    TSCFG_CHECK(rc);
+    (*read) += line_read;
+  } else if (got == 2 &&
+      c[0] == '/' &&
+      (c[1] == '/' || c[1] == '*')) {
+
+    rc = lex_eat(lex, 2);
+    TSCFG_CHECK(rc);
+    (*read) += 2;
+
+    if (c[1] == '/') {
+      int line_read;
+      rc = eat_rest_of_line(lex, &line_read);
+      TSCFG_CHECK(rc);
+      (*read) += line_read;
+    } else {
+      assert(c[1] == '*');
+      int comm_read = 0;
+      rc = eat_until_comm_end(lex, &comm_read);
+      TSCFG_CHECK(rc);
+      (*read) += comm_read;
+    }
+  }
+
+  return TSCFG_OK;
 }
+
+static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read) {
+  tscfg_rc rc;
+
+  *read = 0;
+
+  while (true) {
+    char c;
+    int got;
+    rc = lex_peek(lex, &c, 1, &got);
+    TSCFG_CHECK(rc);
+
+
+    if (got == 0) {
+      break;
+    }
+
+    rc = lex_eat(lex, 1);
+    TSCFG_CHECK(rc);
+
+    (*read)++;
+
+    if (c == '\n') {
+      (*read)++;
+      break;
+    }
+  }
+
+  return TSCFG_OK;
+}
+
+/*
+ * Search for end of /* comment
+ */
+static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read) {
+  tscfg_rc rc;
+
+  *read = 0;
+
+  while (true) {
+    char c[2];
+    int got;
+    rc = lex_peek(lex, c, 2, &got);
+    TSCFG_CHECK(rc);
+
+    if (got == 2) {
+      if (c[0] == '*' && c[1] == '/') {
+        rc = lex_eat(lex, 2);
+        TSCFG_CHECK(rc);
+
+        (*read) += 2;
+
+        break;
+      } else {
+        // Need to check next position
+        int advance = c[1] == '*' ? 1 : 2;
+        rc = lex_eat(lex, advance);
+        TSCFG_CHECK(rc);
+
+        (*read) += advance;
+      }
+    } else {
+      // TODO: better error report with line number, etc
+      tscfg_report_err("/* comment without matching */");
+      return TSCFG_ERR_SYNTAX;
+    }
+  }
+
+  return TSCFG_OK;
+}
+
 
 /*
  * Remove any leading whitespace characters from input.

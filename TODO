@@ -1,3 +1,4 @@
 List of miscellaneous unimplemented features.
 
-* Support for non-ascii character encoding.
+* Support for UTF-8 encoding.
+* Support in lexer for treating newlines as tokens.

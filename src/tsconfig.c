@@ -115,7 +115,7 @@ cleanup:
   ts_parse_state_finalize(&state);
 
   if (rc != TSCFG_OK) {
-    // TODO: cleanup partially built config
+    // TODO: cleanup partially built config on error
   }
   return rc;
 }

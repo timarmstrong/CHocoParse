@@ -25,4 +25,7 @@ void tscfg_report_err_v(const char *fmt, va_list args);
 #define TSCFG_CHECK_MALLOC(ptr) { \
   if ((ptr) == NULL) return TSCFG_ERR_OOM; }
 
+#define TSCFG_CHECK_MALLOC_GOTO(ptr, label, rc_var) { \
+  if ((ptr) == NULL) { (rc_var) = TSCFG_ERR_OOM; goto label; }}
+
 #endif // __TSCONFIG_ERR_H

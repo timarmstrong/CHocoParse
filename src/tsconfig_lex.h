@@ -45,7 +45,7 @@ typedef enum {
   /* Literals and variables: include string */
   TSCFG_TOK_NUMBER, // Numeric token, text is stored in str
   TSCFG_TOK_UNQUOTED, // Unquoted text, text is stored in str
-  TSCFG_TOK_STRING, // Quoted text, text is stored in str
+  TSCFG_TOK_STRING, // Quoted text, raw text is stored in str
   TSCFG_TOK_VAR, // Variable name, name store in string
 } tscfg_tok_tag;
 

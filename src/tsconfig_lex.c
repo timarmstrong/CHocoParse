@@ -25,7 +25,7 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *go
 static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes);
 static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
-static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes);
+static void lex_eat(tscfg_lex_state *lex, size_t bytes);
 
 static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read,
                                   bool *newline);
@@ -36,6 +36,10 @@ static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
                                   bool *newline);
 
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c, tscfg_tok *tok);
+static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok);
+static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok);
+static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
+                                            tscfg_tok *tok);
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
                                                   tscfg_tok *tok);
@@ -101,10 +105,8 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
 
   switch (c) {
     case '"':
-      // TODO: string, either single quoted or triple quoted
-      rc = lex_eat(lex, 1);
-      TSCFG_CHECK(rc);
-      return TSCFG_ERR_UNIMPL;
+      // string, either single quoted or triple quoted
+      return extract_hocon_str(lex, tok);
     case '{':
     case '}':
     case '(':
@@ -115,9 +117,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
     case '=':
     case ':':
       // Single character toks
-      rc = lex_eat(lex, 1);
-      TSCFG_CHECK(rc);
-
+      lex_eat(lex, 1);
       set_nostr_tok(tag_from_char(c), tok);
       return TSCFG_OK;
     case '+':
@@ -259,7 +259,7 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
   return TSCFG_OK;
 }
 
-static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes) {
+static void lex_eat(tscfg_lex_state *lex, size_t bytes) {
   assert(bytes <= lex->buf_len);
 
   /* Bump data forward
@@ -271,8 +271,6 @@ static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes) {
     memmove(&lex->buf[0], &lex->buf[bytes], remaining);
   }
   lex->buf_len = remaining;
-
-  return TSCFG_OK;
 }
 
 /*
@@ -321,8 +319,7 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read) {
   TSCFG_CHECK(rc);
 
   if (got >= 1 && c[0] == '#') {
-    rc = lex_eat(lex, 1);
-    TSCFG_CHECK(rc);
+    lex_eat(lex, 1);
     (*read)++;
 
     size_t line_read = 0;
@@ -333,8 +330,7 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read) {
       c[0] == '/' &&
       (c[1] == '/' || c[1] == '*')) {
 
-    rc = lex_eat(lex, 2);
-    TSCFG_CHECK(rc);
+    lex_eat(lex, 2);
     (*read) += 2;
 
     if (c[1] == '/') {
@@ -380,9 +376,7 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read) {
       }
     }
 
-    rc = lex_eat(lex, pos);
-    TSCFG_CHECK(rc);
-
+    lex_eat(lex, pos);
     (*read) += pos;
   }
 
@@ -408,9 +402,7 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
     if (got < 2) {
       // Cannot be comment close, therefore unclosed comment
 
-      rc = lex_eat(lex, got);
-      TSCFG_CHECK(rc);
-
+      lex_eat(lex, got);
       (*read) += got;
 
       lex_report_err(lex, "/* comment without matching */");
@@ -430,9 +422,7 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
       }
     }
 
-    rc = lex_eat(lex, pos);
-    TSCFG_CHECK(rc);
-
+    lex_eat(lex, pos);
     (*read) += pos;
   }
 
@@ -469,9 +459,7 @@ static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
     }
 
     if (ws_chars > 0) {
-      rc = lex_eat(lex, ws_chars);
-      TSCFG_CHECK(rc);
-
+      lex_eat(lex, ws_chars);
       (*read) += ws_chars;
     }
 
@@ -492,6 +480,7 @@ static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
                                     tscfg_tok *tok) {
   tscfg_rc rc;
+  // TODO: cleanup on error
   size_t str_size = 32;
   char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
@@ -530,9 +519,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
     }
 
     if (num_chars > 0) {
-      rc = lex_eat(lex, num_chars);
-      TSCFG_CHECK(rc);
-
+      lex_eat(lex, num_chars);
       len += num_chars;
     }
 
@@ -550,12 +537,167 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
   return TSCFG_OK;
 }
 
+/*
+ * Extract string according to HOCON rules.
+ * Assumes that " is currently first character in lexer.
+ */
+static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
+  tscfg_rc rc;
+  // Remove initial "
+  lex_eat(lex, 1);
+
+  char buf[2];
+  size_t got = 0;
+  rc = lex_peek(lex, buf, 2, &got);
+  TSCFG_CHECK(rc);
+
+  if (got == 2 && memcmp(buf, "\"\"", 2) == 0) {
+    lex_eat(lex, 2);
+    // Multiline string
+    return extract_hocon_multiline_str(lex, tok);
+  } else {
+    // Regular JSON string
+    return extract_json_str(lex, tok);
+  }
+}
+
+static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
+  tscfg_rc rc;
+  size_t len = 0;
+  size_t str_size = 32;
+  char *str = malloc(str_size);
+  TSCFG_CHECK_MALLOC(str);
+
+  bool end_of_string = false;
+
+  do {
+    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+    if (str_size < min_size) {
+      size_t new_size = str_size * 2;
+      new_size = (new_size > min_size) ? new_size : min_size;
+      void *tmp = realloc(str, new_size);
+      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+      str = tmp;
+      str_size = new_size;
+    }
+
+    size_t got;
+    char *pos = &str[len];
+
+    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+
+    size_t to_append = 0;
+
+    while (to_append < got) {
+
+      // Next character is part of string
+      to_append++;
+      // TODO: implement, factoring in escape codes, etc
+      rc = TSCFG_ERR_UNIMPL;
+      goto cleanup;
+    }
+
+    if (to_append > 0) {
+      lex_eat(lex, to_append);
+      len += to_append;
+    }
+
+    if (got == 0) {
+      // End of input
+      end_of_string = true;
+    }
+  } while (!end_of_string);
+
+  tok->tag = TSCFG_TOK_UNQUOTED;
+  tok->length = len;
+  tok->str = str;
+  tok->str[tok->length] = '\0';
+  return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
+}
+
+/*
+ * Extract multiline string.  Assume lexer has been advanced past open
+ * quotes.
+ */
+static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
+                                            tscfg_tok *tok) {
+  tscfg_rc rc;
+  size_t len = 0;
+  size_t str_size = 128;
+  char *str = malloc(str_size);
+  TSCFG_CHECK_MALLOC(str);
+
+  while (true) {
+    assert(LEX_PEEK_BATCH_SIZE >= 4); // Look for triple quote plus one
+    
+
+    // Resize more aggressively since strings are often long
+    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+    if (str_size < min_size) {
+      size_t new_size = str_size * 2;
+      new_size = (new_size > min_size) ? new_size : min_size;
+      void *tmp = realloc(str, new_size);
+      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+      str = tmp;
+      str_size = new_size;
+    }
+
+    char *pos = &str[len];
+
+    size_t got = 0;
+    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+
+    size_t to_append = 0;
+    if (got < 3) {
+      lex_report_err(lex, "Unterminated \"\"\" string");
+      return TSCFG_ERR_SYNTAX;
+    } else if (memcmp(pos, "\"\"\"", 3) == 0) {
+      // Need to match last """ according to HOCON
+      if (got == 4 && pos[3] == '"') {
+        to_append = 1; // First " is part of string
+      } else {
+        // Last """ in string
+        lex_eat(lex, 3);
+        break;
+      }
+    } else {
+      // First character plus any non-quotes are definitely in string
+      to_append = 1;
+      while (to_append < LEX_PEEK_BATCH_SIZE && pos[to_append] != '"') {
+        to_append++;
+      }
+    }
+
+    assert(to_append != 0);
+    lex_eat(lex, to_append);
+    len += to_append;
+  }
+
+  tok->tag = TSCFG_TOK_UNQUOTED;
+  tok->length = len;
+  tok->str = str;
+  tok->str[tok->length] = '\0';
+  return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
+
+}
 
 /*
  * Extract unquoted text according to HOCON rules
  */
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
+
+  // TODO: cleanup on error
   size_t str_size = 32;
   char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
@@ -615,9 +757,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
     }
 
     if (to_append > 0) {
-      rc = lex_eat(lex, to_append);
-      TSCFG_CHECK(rc);
-
+      lex_eat(lex, to_append);
       len += to_append;
     }
 
@@ -675,8 +815,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
     tok->str = NULL;
     tok->length = 0;
 
-    rc = lex_eat(lex, kwlen);
-    TSCFG_CHECK(rc);
+    lex_eat(lex, kwlen);
 
     return TSCFG_OK;
   } else {

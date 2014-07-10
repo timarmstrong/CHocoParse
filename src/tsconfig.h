@@ -15,7 +15,8 @@
 #include <stdio.h>
 
 typedef struct {
-  // TODO: data structure
+  // TODO: data structure to represent JSON
+  int dummy;
 } ts_config;
 
 typedef enum {

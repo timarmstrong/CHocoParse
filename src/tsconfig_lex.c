@@ -21,17 +21,17 @@
 static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok);
 static inline tscfg_tok_tag tag_from_char(char c);
 
-static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, int len, int *got);
-static tscfg_rc lex_read_more(tscfg_lex_state *lex, int bytes);
-static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, int bytes,
-                         int *read_bytes);
-static tscfg_rc lex_eat(tscfg_lex_state *lex, int bytes);
+static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *got);
+static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes);
+static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, size_t bytes,
+                         size_t *read_bytes);
+static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes);
 
-static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read);
-static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read);
-static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read);
-static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read);
-static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, int *read);
+static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read);
+static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read);
+static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read);
+static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read);
+static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read);
 
 static bool is_json_whitespace(char c);
 
@@ -64,13 +64,13 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
 
   // First consume any comments or whitespace
-  int read = 0;
+  size_t read = 0;
   rc = eat_hocon_comm_ws(lex, &read);
   TSCFG_CHECK(rc);
 
   // Next character should be start of token.
   char c;
-  int got;
+  size_t got;
   rc = lex_peek(lex, &c, 1, &got);
   TSCFG_CHECK(rc);
 
@@ -78,6 +78,8 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
     set_nostr_tok(TSCFG_TOK_EOF, tok);
     return TSCFG_OK;
   }
+
+  assert(got == 1);
 
   switch (c) {
     case '"':
@@ -141,28 +143,27 @@ static inline tscfg_tok_tag tag_from_char(char c) {
   }
 }
 
-static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, int len, int *got) {
-  assert(len >= 0);
+static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *got) {
   tscfg_rc rc;
 
   if (lex->buf_len < len) {
     // Attempt to read more
-    int toread = len - lex->buf_len;
+    size_t toread = len - lex->buf_len;
     rc = lex_read_more(lex, toread);
     TSCFG_CHECK(rc);
   }
 
-  *got = lex->buf_len >= len ? len : (int)lex->buf_len;
-  memcpy(buf, lex->buf, (size_t)*got);
+  *got = lex->buf_len >= len ? len : lex->buf_len;
+  memcpy(buf, lex->buf, *got);
   return TSCFG_OK;
 }
 
 /*
  * Read additional bytes into buffers.
  */
-static tscfg_rc lex_read_more(tscfg_lex_state *lex, int bytes) {
+static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
   tscfg_rc rc;
-  size_t size_needed = (size_t)bytes + lex->buf_len;
+  size_t size_needed = bytes + lex->buf_len;
 
   if (size_needed >= lex->buf_size) {
     void *tmp = realloc(lex->buf, size_needed);
@@ -172,7 +173,7 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, int bytes) {
     lex->buf_size = size_needed;
   }
 
-  int read_bytes = 0;
+  size_t read_bytes = 0;
   rc = lex_read(&lex->in, &lex->buf[lex->buf_len], bytes, &read_bytes);
   TSCFG_CHECK(rc);
 
@@ -181,24 +182,25 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, int bytes) {
   return TSCFG_OK;
 }
 
-static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, int bytes,
-                         int *read_bytes) {
+static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, size_t bytes,
+                         size_t *read_bytes) {
   // TODO: other inputs
   assert(in->kind == TS_CONFIG_IN_FILE);
-  assert(bytes >= 0);
 
-  size_t read = fread(buf, 1, (size_t)bytes, in->data.f);
+  size_t read = fread(buf, 1, bytes, in->data.f);
   if (read != bytes) {
     // TODO: better error handling
     tscfg_report_err("Error reading for input file");
     return TSCFG_ERR_IO;
   }
 
+  *read_bytes = read;
+
   return TSCFG_OK;
 }
 
-static tscfg_rc lex_eat(tscfg_lex_state *lex, int bytes) {
-  assert(bytes >= lex->buf_len);
+static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes) {
+  assert(bytes <= lex->buf_len);
 
   /* Bump data forward
    * Note that this is inefficient if we are frequently bumping small portions of a large
@@ -216,11 +218,11 @@ static tscfg_rc lex_eat(tscfg_lex_state *lex, int bytes) {
 /*
  * Consume comments and whitespace.
  */
-static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read) {
+static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read) {
   tscfg_rc rc;
-  int total_read = 0, iter_read;
+  size_t total_read = 0, iter_read;
   do {
-    int ws_read = 0, comm_read = 0;
+    size_t ws_read = 0, comm_read = 0;
     // Follows JSON whitespace rules
     rc = eat_json_whitespace(lex, &ws_read);
     TSCFG_CHECK(rc);
@@ -232,10 +234,12 @@ static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, int *read) {
     total_read += iter_read;
   } while (iter_read > 0);
 
+  *read = total_read;
+
   return TSCFG_OK;
 }
 
-static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
+static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read) {
   tscfg_rc rc;
 
   *read = 0;
@@ -244,7 +248,7 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
    * Look ahead two characters for / followed by / or * or one for #
    */
   char c[2];
-  int got;
+  size_t got;
   rc = lex_peek(lex, c, 2, &got);
   TSCFG_CHECK(rc);
 
@@ -253,7 +257,7 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
     TSCFG_CHECK(rc);
     (*read)++;
 
-    int line_read = 0;
+    size_t line_read = 0;
     rc = eat_rest_of_line(lex, &line_read);
     TSCFG_CHECK(rc);
     (*read) += line_read;
@@ -266,13 +270,13 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
     (*read) += 2;
 
     if (c[1] == '/') {
-      int line_read;
+      size_t line_read;
       rc = eat_rest_of_line(lex, &line_read);
       TSCFG_CHECK(rc);
       (*read) += line_read;
     } else {
       assert(c[1] == '*');
-      int comm_read = 0;
+      size_t comm_read = 0;
       rc = eat_until_comm_end(lex, &comm_read);
       TSCFG_CHECK(rc);
       (*read) += comm_read;
@@ -282,7 +286,7 @@ static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, int *read) {
   return TSCFG_OK;
 }
 
-static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read) {
+static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read) {
   tscfg_rc rc;
 
   *read = 0;
@@ -291,7 +295,7 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read) {
 
   while (!end_of_line) {
     char buf[LEX_PEEK_BATCH_SIZE];
-    int got;
+    size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
 
@@ -299,7 +303,7 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read) {
       break;
     }
 
-    int pos = 0;
+    size_t pos = 0;
     while (pos < got) {
       // Make sure to consume newline
       if (buf[pos++] == '\n') {
@@ -320,7 +324,7 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, int *read) {
 /*
  * Search for end of multiline comment
  */
-static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read) {
+static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
   tscfg_rc rc;
 
   bool in_comment = true;
@@ -329,7 +333,7 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read) {
 
   while (in_comment) {
     char buf[LEX_PEEK_BATCH_SIZE];
-    int got;
+    size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
 
@@ -346,7 +350,7 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read) {
       return TSCFG_ERR_SYNTAX;
     }
 
-    int pos = 0;
+    size_t pos = 0;
     while (pos < got - 1) {
       if (buf[pos] == '*' && buf[pos + 1] == '/') {
         pos += 2;
@@ -372,20 +376,20 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, int *read) {
 /*
  * Remove any leading whitespace characters from input.
  */
-static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, int *read) {
+static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
   tscfg_rc rc;
 
   *read = 0;
 
   while (true) {
     char buf[LEX_PEEK_BATCH_SIZE];
-    int got;
+    size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
 
-    assert(got >= 0 && got <= LEX_PEEK_BATCH_SIZE);
+    assert(got <= LEX_PEEK_BATCH_SIZE);
 
-    int ws_chars = 0;
+    size_t ws_chars = 0;
     while (ws_chars < got &&
            is_json_whitespace(buf[ws_chars])) {
       ws_chars++;

@@ -28,8 +28,12 @@ typedef enum {
   TSCFG_TOK_EQUAL,
   TSCFG_TOK_PLUSEQUAL,
   TSCFG_TOK_COLON,
-  TSCFG_TOK_WORD, // Unquoted word, text is stored in str
-  TSCFG_TOK_STRING, // Quoted word, text is stored in str
+  TSCFG_TOK_TRUE,
+  TSCFG_TOK_FALSE,
+  TSCFG_TOK_NULL,
+  TSCFG_TOK_NUMBER, // Numeric token, text is stored in str
+  TSCFG_TOK_UNQUOTED, // Unquoted text, text is stored in str
+  TSCFG_TOK_STRING, // Quoted text, text is stored in str
   TSCFG_TOK_VAR, // Variable name, name store in string
 } tscfg_tok_tag;
 

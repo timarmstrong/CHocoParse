@@ -33,8 +33,10 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read);
 static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read);
 
-static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
-                                       char **tok, size_t *tok_len);
+static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c, tscfg_tok *tok);
+static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
+static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
+                                                  tscfg_tok *tok);
 
 static bool is_hocon_whitespace(char c);
 static bool is_hocon_unquoted_char(char c);
@@ -110,9 +112,27 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
     case '+':
       // TODO: must be += operator
       return TSCFG_ERR_UNIMPL;
+
+    case '-': case '0': case '1': case '2': case '3': case '4':
+    case '5': case '6': case '7': case '8': case '9':
+      // TODO: number token
+      return extract_json_number(lex, c, tok);
+
+    case 't':
+    case 'f':
+    case 'n':
+      // TODO: try to parse as keyword, otherwise unquoted string
+      return extract_keyword_or_hocon_unquoted(lex, c, tok);
+
     default:
       // TODO: other token types
-      return TSCFG_ERR_UNIMPL;
+      if (is_hocon_unquoted_char(c)) {
+        return extract_hocon_unquoted(lex, tok);
+      } else {
+        // TODO: better error handling
+        tscfg_report_err("Unexpected character: %c", c);
+        return TSCFG_ERR_SYNTAX;
+      }
   }
 }
 
@@ -443,10 +463,69 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
 }
 
 /*
+ * Extract JSON/HOCON number token
+ * c: first character of string
+ * TODO: doesn't handle exponentials
+ */
+static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
+                                    tscfg_tok *tok) {
+  tscfg_rc rc;
+  // TODO: resize tok.
+  char *str = malloc(512);
+  TSCFG_CHECK_MALLOC(str);
+
+  size_t len = 1;
+  str[0] = c;
+
+  bool saw_dec_point = false;
+
+  while (true) {
+    char *pos = &str[len];
+    size_t got;
+    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    TSCFG_CHECK(rc);
+
+    assert(got <= LEX_PEEK_BATCH_SIZE);
+
+    size_t num_chars = 0;
+    while (num_chars < got) {
+      c = pos[num_chars];
+      if ((c >= '0' && c <= '9')) {
+        num_chars++;
+      } else if (!saw_dec_point && c == '.') {
+        saw_dec_point = true;
+        num_chars++;
+      } else {
+        break;
+      }
+    }
+
+    if (num_chars > 0) {
+      rc = lex_eat(lex, num_chars);
+      TSCFG_CHECK(rc);
+
+      len += num_chars;
+    }
+
+    if (num_chars < got || got == 0) {
+      // End of whitespace or file
+      break;
+    }
+
+  }
+
+  tok->tag = TSCFG_TOK_NUMBER;
+  tok->length = len;
+  tok->str = str;
+  tok->str[tok->length] = '\0';
+  return TSCFG_OK;
+}
+
+
+/*
  * Extract unquoted text according to HOCON rules
  */
-static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
-                                       char **tok, size_t *tok_len) {
+static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
   // TODO: resize tok.
   char *str = malloc(512);
@@ -459,7 +538,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
 
     rc = lex_peek(lex, pos, 2, &got);
     TSCFG_CHECK(rc);
-    
+
     if (got == 0 || !is_hocon_unquoted_char(pos[0]) ||
         is_hocon_whitespace(pos[0]) || is_comment_start(pos, got)) {
       // Cases where unquoted text terminates
@@ -473,9 +552,61 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex,
     }
   }
 
-  *tok = str;
-  *tok_len = len;
+  tok->tag = TSCFG_TOK_UNQUOTED;
+  tok->length = len;
+  tok->str = str;
+  tok->str[tok->length] = '\0';
   return TSCFG_OK;
+}
+
+/*
+ * Extract keyword or unquoted string.
+ * c: first character of keyword
+ */
+static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
+                                                  tscfg_tok *tok) {
+  tscfg_rc rc;
+
+  const char *kw;
+  size_t kwlen;
+  tscfg_tok_tag kwtag;
+
+  switch (c) {
+  case 't':
+    kw = "true";
+    kwlen = 4;
+    kwtag = TSCFG_TOK_TRUE;
+    break;
+  case 'f':
+    kw = "false";
+    kwlen = 5;
+    kwtag = TSCFG_TOK_FALSE;
+  case 'n':
+    kw = "null";
+    kwlen = 4;
+    kwtag = TSCFG_TOK_NULL;
+  default:
+    assert(false);
+    return TSCFG_ERR_UNKNOWN;
+  }
+
+  char buf[kwlen];
+  size_t got;
+  rc = lex_peek(lex, buf, kwlen, &got);
+  TSCFG_CHECK(rc);
+
+  if (got == kwlen && memcmp(buf, kw, kwlen) == 0) {
+    tok->tag = kwtag;
+    tok->str = NULL;
+    tok->length = 0;
+
+    rc = lex_eat(lex, kwlen);
+    TSCFG_CHECK(rc);
+
+    return TSCFG_OK;
+  } else {
+    return extract_hocon_unquoted(lex, tok);
+  }
 }
 
 /*
@@ -501,29 +632,34 @@ static bool is_hocon_whitespace(char c) {
 static bool is_hocon_unquoted_char(char c) {
   switch (c) {
     case '$':
-    case '+':
-    case '#':
-    case '`':
-    case '\\':
-    case '?':
-    case '^':
-    case '!':
-    case '@':
+    case '"':
     case '{':
     case '}':
     case '[':
     case ']':
-    case '(':
-    case ')':
-    case '"':
     case ':':
     case '=':
     case ',':
-      // Could be interpreted as start of next JSON token
+    case '+':
+    case '#':
+    case '`':
+    case '^':
+    case '?':
+    case '!':
+    case '@':
+    case '*':
+    case '&':
+    case '\\':
+      // Forbidden characters according to HOCON spec
       return false;
     default:
-      // All others can appear
-      return true;
+      if (is_hocon_whitespace(c)) {
+        // Whitespace is also forbidden
+        return false;
+      } else{
+        // All others can appear
+        return true;
+      }
   }
 }
 

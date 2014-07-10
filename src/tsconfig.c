@@ -1,5 +1,5 @@
 /*
- * C parser for HOCON properties.
+ * C parser for HOCON properties file (Typesafe's configuration format).
  *
  * For HOCON reference: https://github.com/typesafehub/config
  *
@@ -17,22 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
-typedef struct {
-  // TODO: data structure
-} ts_config;
-
-typedef enum {
-  TSCFG_OK,
-  TSCFG_ERR_ARG, /* Invalid argument to function */
-  TSCFG_ERR_OOM, /* Out of memory */
-  TSCFG_ERR_SYNTAX, /* Invalid syntax in input */
-  TSCFG_ERR_UNKNOWN,
-  TSCFG_ERR_UNIMPL,
-} tscfg_rc;
-
-typedef enum {
-  TSCFG_HOCON,
-} tscfg_fmt;
+#include "tsconfig.h"
 
 typedef struct {
   char *str;
@@ -40,7 +25,7 @@ typedef struct {
 } ts_tok;
 
 typedef struct {
-  FILE* in;
+  ts_config_input in; 
 
   ts_tok *toks;
   int toks_size;
@@ -59,10 +44,8 @@ void tscfg_report_err_v(const char *fmt, va_list args);
 
 #define TSCFG_CHECK_MALLOC(ptr) { \
   if ((ptr) == NULL) return TSCFG_ERR_OOM; }
-tscfg_rc parse_ts_config(FILE *in, tscfg_fmt fmt, ts_config *cfg);
-tscfg_rc parse_hocon(FILE *in, ts_config *cfg);
 
-tscfg_rc ts_parse_state_init(ts_parse_state *state, FILE* in);
+tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in);
 void ts_parse_state_finalize(ts_parse_state *state);
 void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
@@ -78,25 +61,8 @@ static tscfg_rc pop_toks(ts_parse_state *state, int count);
 static tscfg_rc eat_json_whitespace(ts_parse_state *state);
 static bool is_json_whitespace(char c);
 
-int main(int argc, const char **argv) {
 
-  assert(argc == 1);
-  // TODO: cmdline args
-  
-  tscfg_rc rc;
-  ts_config cfg;
-  FILE *config_stream = stdin;
-  rc = parse_ts_config(config_stream, TSCFG_HOCON, &cfg);
-  if (rc != TSCFG_OK) { 
-    fprintf(stderr, "Error during parsing\n");
-    return 1;
-  }
-
-  fprintf(stderr, "Success!\n");
-  return 0;
-}
-
-tscfg_rc parse_ts_config(FILE *in, tscfg_fmt fmt, ts_config *cfg) {
+tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg) {
   if (fmt == TSCFG_HOCON) {
     return parse_hocon(in, cfg);
   } else {
@@ -105,7 +71,7 @@ tscfg_rc parse_ts_config(FILE *in, tscfg_fmt fmt, ts_config *cfg) {
   }
 }
 
-tscfg_rc parse_hocon(FILE *in, ts_config *cfg) {
+tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   ts_parse_state state;
   tscfg_rc rc = TSCFG_ERR_UNKNOWN;
 
@@ -177,7 +143,7 @@ tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
   return TSCFG_ERR_UNIMPL;
 }
 
-tscfg_rc ts_parse_state_init(ts_parse_state *state, FILE* in) {
+tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
   state->in = in;
   // TODO: additional buffering?
   
@@ -190,8 +156,14 @@ tscfg_rc ts_parse_state_init(ts_parse_state *state, FILE* in) {
 }
 
 void ts_parse_state_finalize(ts_parse_state *state) {
-  // Invalidate structure
-  state->in = NULL;
+  // Invalidate input
+  state->in.kind = TS_CONFIG_IN_NONE;
+
+  // Free memory
+  free(state->toks);
+  state->toks = NULL;
+  state->toks_size = 0;
+  state->ntoks = 0;
 }
 
 void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
@@ -288,8 +260,11 @@ static tscfg_rc read_tok(ts_parse_state *state, ts_tok *tok, bool *eof) {
  */
 static tscfg_rc eat_json_whitespace(ts_parse_state *state) {
   while (true) {
+    // TODO: other inputs
+    assert(state->in.kind == TS_CONFIG_IN_FILE);
+    
     // TODO: better approach to reading
-    int c = getc(state->in);
+    int c = getc(state->in.data.f);
 
     if (c == EOF) {
       // TODO: check for other error
@@ -298,7 +273,7 @@ static tscfg_rc eat_json_whitespace(ts_parse_state *state) {
     }
 
     if (!is_json_whitespace((char)c)) {
-      int tmp = ungetc(c, state->in);
+      int tmp = ungetc(c, state->in.data.f);
       if (tmp != c) {
         tscfg_report_err("Error pushing char back on stream.");
         return TSCFG_ERR_UNKNOWN;

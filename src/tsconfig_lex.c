@@ -23,7 +23,7 @@ static inline tscfg_tok_tag tag_from_char(char c);
 
 static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *got);
 static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes);
-static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, size_t bytes,
+static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes);
 
@@ -41,6 +41,8 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
 static bool is_hocon_whitespace(char c);
 static bool is_hocon_unquoted_char(char c);
 static bool is_comment_start(const char *buf, size_t len);
+
+static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, ts_config_input in) {
   lex->in = in;
@@ -90,7 +92,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
 
   switch (c) {
     case '"':
-      // TODO: string
+      // TODO: string, either single quoted or triple quoted
       rc = lex_eat(lex, 1);
       TSCFG_CHECK(rc);
       return TSCFG_ERR_UNIMPL;
@@ -121,16 +123,14 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
     case 't':
     case 'f':
     case 'n':
-      // TODO: try to parse as keyword, otherwise unquoted string
+      // try to parse as keyword, otherwise unquoted string
       return extract_keyword_or_hocon_unquoted(lex, c, tok);
 
     default:
-      // TODO: other token types
       if (is_hocon_unquoted_char(c)) {
         return extract_hocon_unquoted(lex, tok);
       } else {
-        // TODO: better error handling
-        tscfg_report_err("Unexpected character: %c", c);
+        lex_report_err(lex, "Unexpected character: %c", c);
         return TSCFG_ERR_SYNTAX;
       }
   }
@@ -206,7 +206,7 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
   }
 
   size_t read_bytes = 0;
-  rc = lex_read(&lex->in, &lex->buf[lex->buf_len], bytes, &read_bytes);
+  rc = lex_read(lex, &lex->buf[lex->buf_len], bytes, &read_bytes);
   TSCFG_CHECK(rc);
 
   lex->buf_len += read_bytes;
@@ -218,8 +218,9 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
  * Lexer read from input.
  * read_bytes: on success, set to number of bytes read.  Only < bytes if EOF.
  */
-static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, size_t bytes,
+static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes) {
+  ts_config_input *in = &lex->in;
   if (in->kind == TS_CONFIG_IN_FILE) {
 
     size_t read = fread(buf, 1, bytes, in->data.f);
@@ -227,8 +228,7 @@ static tscfg_rc lex_read(ts_config_input *in, unsigned char *buf, size_t bytes,
       // Need to distinguish between eof and error
       int err_code = ferror(in->data.f);
       if (err_code != 0) {
-        // TODO: better error handling
-        tscfg_report_err("Error reading for input file");
+        lex_report_err(lex, "Error reading input");
         return TSCFG_ERR_IO;
       }
     }
@@ -396,8 +396,7 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
 
       (*read) += got;
 
-      // TODO: better error report with line number, etc
-      tscfg_report_err("/* comment without matching */");
+      lex_report_err(lex, "/* comment without matching */");
       return TSCFG_ERR_SYNTAX;
     }
 
@@ -728,4 +727,12 @@ static bool is_comment_start(const char *buf, size_t len) {
   } else {
     return false;
   }
+}
+
+static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...) {
+  // TODO: include context, e.g. line number, in errors.
+  va_list args;
+  va_start(args, fmt);
+  tscfg_report_err_v(fmt, args);
+  va_end(args);
 }

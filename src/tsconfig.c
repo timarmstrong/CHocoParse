@@ -40,7 +40,8 @@ tscfg_rc ts_parse_next_tag(ts_parse_state *state, tscfg_tok_tag *tag);
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool *match);
 
-static tscfg_rc pop_toks(ts_parse_state *state, int count);
+static void pop_toks(ts_parse_state *state, int count);
+static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
 
 tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg) {
@@ -65,8 +66,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
-    rc = pop_toks(&state, 1);
-    TSCFG_CHECK_GOTO(rc, cleanup);
+    pop_toks(&state, 1);
   }
 
   // body of JSON
@@ -85,8 +85,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
       goto cleanup;
     }
 
-    rc = pop_toks(&state, 1);
-    TSCFG_CHECK_GOTO(rc, cleanup);
+    pop_toks(&state, 1);
   }
 
   tscfg_tok tok;
@@ -94,8 +93,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
   rc = ts_parse_peek(&state, &tok, 1, &got);
   assert(got == 1); // Should get at least end of file
   if (tok.tag == TSCFG_TOK_EOF) {
-    rc = pop_toks(&state, 1);
-    TSCFG_CHECK_GOTO(rc, cleanup);
+    pop_toks(&state, 1);
   } else {
     // TODO: include token tag
     ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
@@ -165,6 +163,7 @@ static void ts_parse_state_finalize(ts_parse_state *state) {
 }
 
 static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
+  // TODO: include context in errors.
   va_list args;
   va_start(args, fmt);
   tscfg_report_err_v(fmt, args);
@@ -242,15 +241,12 @@ tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
 
 /*
  * Remove leading tokens from input.
+ *
+ * Caller must ensure that there are at least count tokens
  */
-static tscfg_rc pop_toks(ts_parse_state *state, int count) {
-  // TODO: implement
+static void pop_toks(ts_parse_state *state, int count) {
   assert(count >= 0);
-
-  if (count > state->ntoks) {
-    tscfg_report_err("Popping more tokens than present");
-    return TSCFG_ERR_ARG;
-  }
+  assert(count <= state->ntoks);
 
   // Cleanup memory first
   for (int i = 0; i < count; i++) {
@@ -262,5 +258,17 @@ static tscfg_rc pop_toks(ts_parse_state *state, int count) {
 
   memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
   state->ntoks -= count;
-  return TSCFG_OK;
+}
+
+/*
+ * Remove first token and take ownership of string.
+ *
+ * Caller must ensure that there is at least one valid token.
+ */
+static char *pop_tok_str(ts_parse_state *state, size_t *len) {
+  assert(state->ntoks >= 1);
+  char *str = tscfg_own_token(&state->toks[0], len);
+
+  pop_toks(state, 1);
+  return str;
 }

@@ -16,6 +16,7 @@
 
 
 typedef enum {
+  TSCFG_TOK_INVALID = 0, // Special tag for invalid token
   TSCFG_TOK_EOF, // Special token for end of file
 
   TSCFG_TOK_OPEN_BRACE,
@@ -68,5 +69,19 @@ void tscfg_lex_finalize(tscfg_lex_state *lex);
   tok: unless error, filled in with next token.  Special tag used for EOF.
  */
 tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok);
+
+/*
+ * Take ownership of string from token.
+ */
+static inline char *tscfg_own_token(tscfg_tok *tok, size_t *length) {
+  char *str = tok->str;
+  *length = tok->length;
+
+  tok->str = NULL;
+  tok->length = 0;
+  tok->tag = TSCFG_TOK_INVALID;
+
+  return str;
+}
 
 #endif // __TSCONFIG_LEX_H

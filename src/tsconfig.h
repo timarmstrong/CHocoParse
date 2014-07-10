@@ -14,10 +14,7 @@
 
 #include <stdio.h>
 
-typedef struct {
-  // TODO: data structure to represent JSON
-  int dummy;
-} ts_config;
+#include "tsconfig_data.h"
 
 typedef enum {
   TSCFG_OK,

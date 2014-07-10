@@ -153,13 +153,14 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *go
     TSCFG_CHECK(rc);
   }
 
-  *got = lex->buf_len >= len ? len : lex->buf_len;
+  *got = lex->buf_len < len ? lex->buf_len : len;
   memcpy(buf, lex->buf, *got);
   return TSCFG_OK;
 }
 
 /*
  * Read additional bytes into buffers.
+ * If hits end of file, will not read as many as requested
  */
 static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
   tscfg_rc rc;
@@ -228,8 +229,8 @@ static tscfg_rc lex_eat(tscfg_lex_state *lex, size_t bytes) {
   size_t remaining = lex->buf_len - bytes;
   if (remaining > 0) {
     memmove(&lex->buf[0], &lex->buf[bytes], remaining);
-    lex->buf_len = remaining;
   }
+  lex->buf_len = remaining;
 
   return TSCFG_OK;
 }
@@ -421,7 +422,7 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
       (*read) += ws_chars;
     }
 
-    if (ws_chars < got) {
+    if (ws_chars < got || got == 0) {
       // End of whitespace or file
       break;
     }

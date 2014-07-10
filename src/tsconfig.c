@@ -36,6 +36,7 @@ tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
 tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
+tscfg_rc ts_parse_next_tag(ts_parse_state *state, tscfg_tok_tag *tag);
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool *match);
 
@@ -114,6 +115,17 @@ cleanup:
  * Parse contents between { and }.
  */
 tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
+  tscfg_rc rc;
+
+  // Only handle empty body for now
+  tscfg_tok_tag tag;
+  rc = ts_parse_next_tag(state, &tag);
+  TSCFG_CHECK(rc);
+  if (tag == TSCFG_TOK_CLOSE_BRACE ||
+      tag == TSCFG_TOK_EOF) {
+    return TSCFG_OK;
+  }
+
   // TODO: implement
   // K/V pair:
   // ---------
@@ -195,17 +207,34 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
 }
 
 /*
+ * tag: set to next tag, TSCFG_TOK_EOF if no more
+ */
+tscfg_rc ts_parse_next_tag(ts_parse_state *state, tscfg_tok_tag *tag) {
+  tscfg_tok tok;
+  int got;
+  tscfg_rc rc = ts_parse_peek(state, &tok, 1, &got);
+  TSCFG_CHECK(rc);
+
+  if (got == 0) {
+    *tag = TSCFG_TOK_EOF;
+  } else {
+    *tag = tok.tag;
+  }
+
+  return TSCFG_OK;
+}
+
+/*
  * Check if next token matches.
  * match: set to false if no next token (EOF) or if token is different type
  */
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool *match) {
-  int got;
-  tscfg_tok tok;
-  tscfg_rc rc = ts_parse_peek(state, &tok, 1, &got);
+  tscfg_tok_tag next_tag;
+  tscfg_rc rc = ts_parse_next_tag(state, &next_tag);
   TSCFG_CHECK(rc);
 
-  *match = (got == 1) && (tok.tag == tag);
+  *match = (next_tag == tag);
 
   return TSCFG_OK;
 }

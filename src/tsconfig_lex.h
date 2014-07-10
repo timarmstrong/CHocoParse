@@ -14,11 +14,30 @@
 
 #include "tsconfig.h"
 
+/*
+ * Lexer token
+ */
 typedef struct {
   char *str;
   size_t length;
-} ts_tok;
+} tscfg_tok;
 
-tscfg_rc tscfg_read_tok(ts_config_input *in, ts_tok *tok, bool *eof);
+/*
+ * Lexing state.
+ */
+typedef struct {
+  // Raw input
+  ts_config_input in;
+
+  // Buffer for lookahead
+  unsigned char *buf;
+  size_t buf_size;
+  size_t buf_len;
+} tscfg_lex_state;
+
+tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, ts_config_input in);
+void tscfg_lex_finalize(tscfg_lex_state *lex);
+
+tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok, bool *eof);
 
 #endif // __TSCONFIG_LEX_H

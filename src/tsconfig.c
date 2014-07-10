@@ -21,9 +21,9 @@
 #include "tsconfig_lex.h"
 
 typedef struct {
-  ts_config_input in;
+  tscfg_lex_state lex_state;
 
-  ts_tok *toks;
+  tscfg_tok *toks;
   int toks_size;
   int ntoks;
 } ts_parse_state;
@@ -34,7 +34,7 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
 tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
-tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
+tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
                                size_t len, bool *match);
@@ -87,7 +87,7 @@ tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
     TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
-  ts_tok tok;
+  tscfg_tok tok;
   int got;
   rc = ts_parse_peek(&state, &tok, 1, &got);
   if (got != 0) {
@@ -124,8 +124,10 @@ tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
 }
 
 static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
-  state->in = in;
-  // TODO: additional buffering?
+  tscfg_rc rc;
+
+  rc = tscfg_lex_init(&state->lex_state, in);
+  TSCFG_CHECK(rc);
 
   state->toks_size = 1;
   state->toks = malloc(sizeof(state->toks[0]) * (size_t)state->toks_size);
@@ -136,8 +138,7 @@ static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
 }
 
 static void ts_parse_state_finalize(ts_parse_state *state) {
-  // Invalidate input
-  state->in.kind = TS_CONFIG_IN_NONE;
+  tscfg_lex_finalize(&state->lex_state);
 
   // Free memory
   free(state->toks);
@@ -158,7 +159,7 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
  * count: number of tokens to look ahead
  * got: number of tokesn got, less than len iff end of file
  */
-tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
+tscfg_rc ts_parse_peek(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got) {
   tscfg_rc rc;
 
@@ -173,7 +174,7 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
 
   while (state->ntoks < count) {
     bool eof;
-    rc = tscfg_read_tok(&state->in, &state->toks[state->ntoks], &eof);
+    rc = tscfg_read_tok(&state->lex_state, &state->toks[state->ntoks], &eof);
     TSCFG_CHECK(rc);
 
     if (eof) {
@@ -194,7 +195,7 @@ tscfg_rc ts_parse_peek(ts_parse_state *state, ts_tok *toks,
 tscfg_rc ts_parse_next_matches(ts_parse_state *state, const char *str,
                                size_t len, bool *match) {
   int got;
-  ts_tok tok;
+  tscfg_tok tok;
   tscfg_rc rc = ts_parse_peek(state, &tok, 1, &got);
   TSCFG_CHECK(rc);
 

@@ -23,6 +23,7 @@ typedef enum {
   TSCFG_ERR_ARG, /* Invalid argument to function */
   TSCFG_ERR_OOM, /* Out of memory */
   TSCFG_ERR_SYNTAX, /* Invalid syntax in input */
+  TSCFG_ERR_IO, /* I/O error */
   TSCFG_ERR_UNKNOWN,
   TSCFG_ERR_UNIMPL,
 } tscfg_rc;

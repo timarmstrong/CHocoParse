@@ -470,8 +470,8 @@ static tscfg_rc eat_json_whitespace(tscfg_lex_state *lex, size_t *read) {
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
                                     tscfg_tok *tok) {
   tscfg_rc rc;
-  // TODO: resize tok.
-  char *str = malloc(512);
+  size_t str_size = 32;
+  char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
 
   size_t len = 1;
@@ -480,6 +480,13 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
   bool saw_dec_point = false;
 
   while (true) {
+    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+    if (str_size < min_size) {
+      str = realloc(str, min_size);
+      TSCFG_CHECK_MALLOC(str);
+      str_size = min_size;
+    }
+
     char *pos = &str[len];
     size_t got;
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
@@ -527,14 +534,21 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
  */
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
-  // TODO: resize tok.
-  char *str = malloc(512);
+  size_t str_size = 32;
+  char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
 
 
   bool end_of_tok = false;
   size_t len = 0;
   do {
+    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+    if (str_size < min_size) {
+      str = realloc(str, min_size);
+      TSCFG_CHECK_MALLOC(str);
+      str_size = min_size;
+    }
+
     size_t got;
     char *pos = &str[len];
 

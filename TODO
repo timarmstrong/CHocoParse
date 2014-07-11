@@ -1,7 +1,15 @@
 List of miscellaneous unimplemented features.
 
 * Support for UTF-8 encoding.
-* Support in lexer for treating newlines as tokens.
-* Support in lexer for whitespace tokens (e.g. between unquoted strings)
-* Support in lexer for multi-line strings
 * Error handling API
+
+
+* Post-processing stage where variables, concatenations and overwrites
+* are resolved.
+  1. Build tree with key/values stored in file order
+     - Keys are plain strings.
+     - Key path expressions expanded to nested objects.
+     - Original index is stored alongside key
+  2. Do sort of all keys in all objects by (key, orig_ix)
+  3. Remove overwritten keys, concat tokens from appended keys
+  4. Resolve varaibles

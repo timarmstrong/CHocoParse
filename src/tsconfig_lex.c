@@ -52,9 +52,11 @@ static bool is_hocon_newline(char c);
 static bool is_hocon_unquoted_char(char c);
 static bool is_comment_start(const char *buf, size_t len);
 
-// TODO: doesn't match HOCON spec
+// TODO: HOCON spec specifies unicode whitespace too
 #define CASE_HOCON_WHITESPACE \
-  case ' ': case '\t': case '\n': case '\r'
+  case ' ': case '\t': case '\n': case '\r': case '\v': case '\f': \
+  case '0x01C' /* file sep */: case '0x01D' /* group sep */: \
+  case '0x01E' /* record sep */: case '0x01F' /* unit sep */
 
 static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
 

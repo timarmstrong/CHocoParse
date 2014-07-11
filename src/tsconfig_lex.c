@@ -39,6 +39,8 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c, tscfg_tok *tok);
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok);
+static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
+                    size_t len, char *result, size_t *consumed);
 static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
                                             tscfg_tok *tok);
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
@@ -123,7 +125,6 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
     case '-': case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':
-      // TODO: number token
       return extract_json_number(lex, c, tok);
 
     case 't':
@@ -645,7 +646,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   bool end_of_string = false;
 
   do {
-    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+    size_t min_size = len + 2;
     if (str_size < min_size) {
       size_t new_size = str_size * 2;
       new_size = (new_size > min_size) ? new_size : min_size;
@@ -655,31 +656,34 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
       str_size = new_size;
     }
 
-    size_t got;
-    char *pos = &str[len];
+    const size_t lookahead = 5; // Enough to handle all escape codes
+    char buf[lookahead];
 
-    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    size_t got;
+    rc = lex_peek(lex, buf, lookahead, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
-    size_t to_append = 0;
-
-    while (to_append < got) {
-
-      // Next character is part of string
-      to_append++;
-      // TODO: implement, factoring in escape codes, etc
-      rc = TSCFG_ERR_UNIMPL;
+    if (got == 0) {
+      lex_report_err(lex, "String missing closing \"");
+      rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
 
-    if (to_append > 0) {
-      lex_eat(lex, to_append);
-      len += to_append;
-    }
-
-    if (got == 0) {
-      // End of input
+    char c = buf[0];
+    if (c == '"') {
+      lex_eat(lex, 1);
       end_of_string = true;
+    } else if (c == '\\') {
+      char escaped;
+      size_t escape_len;
+      rc = extract_json_str_escape(lex, buf, got, &escaped, &escape_len);
+      TSCFG_CHECK_GOTO(rc, cleanup);
+
+      len++;
+      lex_eat(lex, escape_len);
+    } else {
+      lex_eat(lex, 1);
+      str[len++] = buf[0];
     }
   } while (!end_of_string);
 
@@ -692,6 +696,60 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
 cleanup:
   free(str);
   return rc;
+}
+
+/*
+ * Handle a JSON string escape code.
+ *
+ * escape: escape sequence, including initial \, plus maybe trailing chars
+ * len: length of sequence, including any trailing chars
+ * result: escaped character
+ * consumed: number of characters consumed
+ */
+static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
+                    size_t len, char *result, size_t *consumed) {
+  assert(len >= 1);
+  assert(escape[0] == '\\');
+
+  if (len == 1) {
+    lex_report_err(lex, "\\ without escape code in string");
+    return TSCFG_ERR_SYNTAX;
+  }
+
+  char c = escape[1];
+  switch (c) {
+    case '\\':
+    case '"':
+    case '/':
+      *result = c;
+      *consumed = 2;
+      break;
+    case 'b':
+      *result = '\b';
+      *consumed = 2;
+      break;
+    case 'f':
+      *result = '\f';
+      *consumed = 2;
+      break;
+    case 'n':
+      *result = '\n';
+      *consumed = 2;
+      break;
+    case 'r':
+      *result = '\r';
+      *consumed = 2;
+      break;
+    case 't':
+      *result = '\t';
+      *consumed = 2;
+      break;
+    case 'u':
+      // TODO: implement unicode escape codes
+      return TSCFG_ERR_UNIMPL;
+  }
+
+  return TSCFG_OK;
 }
 
 /*

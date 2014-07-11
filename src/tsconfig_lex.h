@@ -25,7 +25,6 @@ typedef enum {
   TSCFG_TOK_EOF, // Special token for end of file
 
   /* Special whitespace tokens: include string */
-  // TODO: need to include whitespace data for concatenation
   TSCFG_TOK_WS, // Whitespace without newline
   TSCFG_TOK_WS_NEWLINE, // Whitespace with newline
 
@@ -54,7 +53,7 @@ typedef enum {
   /* Literals and variables: include string */
   TSCFG_TOK_NUMBER, // Numeric token, text is stored in str
   TSCFG_TOK_UNQUOTED, // Unquoted text, text is stored in str
-  TSCFG_TOK_STRING, // Quoted text, raw text is stored in str
+  TSCFG_TOK_STRING, // Quoted text, string contents after escaping, etc
   TSCFG_TOK_VAR, // Variable name, name store in string
 } tscfg_tok_tag;
 

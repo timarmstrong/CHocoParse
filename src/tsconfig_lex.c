@@ -298,9 +298,6 @@ static tscfg_rc extract_comment_or_hocon_unquoted(tscfg_lex_state *lex,
     // Not comment, interpret as unquoted token
     return extract_hocon_unquoted(lex, tok);
   }
-
-  // TODO: finishin implementing
-  return TSCFG_ERR_UNIMPL;
 }
 
 static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
@@ -340,7 +337,7 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
-    TSCFG_CHECK(rc);
+    TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {
       break;
@@ -416,7 +413,7 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
-    TSCFG_CHECK(rc);
+    TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got < 2) {
       // Cannot be comment close, therefore unclosed comment
@@ -425,7 +422,8 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       len += got;
 
       lex_report_err(lex, "/* comment without matching */");
-      return TSCFG_ERR_SYNTAX;
+      rc = TSCFG_ERR_SYNTAX;
+      goto cleanup;
     }
 
     size_t num_chars = 0;
@@ -504,7 +502,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
     size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
-    TSCFG_CHECK(rc);
+    TSCFG_CHECK_GOTO(rc, cleanup);
 
     assert(got <= LEX_PEEK_BATCH_SIZE);
 
@@ -553,7 +551,6 @@ cleanup:
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
                                     tscfg_tok *tok) {
   tscfg_rc rc;
-  // TODO: cleanup on error
   size_t str_size = 32;
   char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
@@ -567,14 +564,14 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
     size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
     if (str_size < min_size) {
       str = realloc(str, min_size);
-      TSCFG_CHECK_MALLOC(str);
+      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
       str_size = min_size;
     }
 
     char *pos = &str[len];
     size_t got;
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
-    TSCFG_CHECK(rc);
+    TSCFG_CHECK_GOTO(rc, cleanup);
 
     assert(got <= LEX_PEEK_BATCH_SIZE);
 
@@ -608,6 +605,10 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
   tok->length = len;
   tok->str = str;
   return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
 }
 
 /*
@@ -768,19 +769,18 @@ cleanup:
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
 
-  // TODO: cleanup on error
   size_t str_size = 32;
   char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
+  size_t len = 0;
 
 
   bool end_of_tok = false;
-  size_t len = 0;
   do {
     size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
     if (str_size < min_size) {
       str = realloc(str, min_size);
-      TSCFG_CHECK_MALLOC(str);
+      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
       str_size = min_size;
     }
 
@@ -789,7 +789,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
 
     assert(LEX_PEEK_BATCH_SIZE >= 2); // Need lookahead of at least two chars
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
-    TSCFG_CHECK(rc);
+    TSCFG_CHECK_GOTO(rc, cleanup);
 
     size_t to_append = 0;
 
@@ -842,7 +842,12 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   str[len] = '\0';
   tok->length = len;
   tok->str = str;
+
   return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
 }
 
 /*

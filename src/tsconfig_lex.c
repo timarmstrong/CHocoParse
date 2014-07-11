@@ -55,8 +55,8 @@ static bool is_comment_start(const char *buf, size_t len);
 // TODO: HOCON spec specifies unicode whitespace too
 #define CASE_HOCON_WHITESPACE \
   case ' ': case '\t': case '\n': case '\r': case '\v': case '\f': \
-  case '0x01C' /* file sep */: case '0x01D' /* group sep */: \
-  case '0x01E' /* record sep */: case '0x01F' /* unit sep */
+  case 0x01C /* file sep */: case 0x01D /* group sep */: \
+  case 0x01E /* record sep */: case 0x01F /* unit sep */
 
 static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
 
@@ -121,9 +121,25 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
       lex_eat(lex, 1);
       set_nostr_tok(tag_from_char(c), tok);
       return TSCFG_OK;
-    case '+':
-      // TODO: must be += operator
-      return TSCFG_ERR_UNIMPL;
+    case '+': {
+      lex_eat(lex, 1);
+
+      rc = lex_peek(lex, &c, 1, &got);
+      TSCFG_CHECK(rc);
+
+      if (got == 0) {
+        lex_report_err(lex, "Trailing + at end of file");
+        return TSCFG_ERR_SYNTAX;
+      } else if (c != '=') {
+        // Must be += operator
+        lex_eat(lex, 1);
+        set_nostr_tok(TSCFG_TOK_PLUSEQUAL, tok);
+        return TSCFG_OK;
+      } else {
+        lex_report_err(lex, "Invalid char %c after =", c);
+        return TSCFG_ERR_SYNTAX;
+      }
+    }
 
     case '-': case '0': case '1': case '2': case '3': case '4':
     case '5': case '6': case '7': case '8': case '9':

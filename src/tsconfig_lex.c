@@ -362,14 +362,13 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       break;
     }
 
-    size_t num_chars = 0;
-    while (num_chars < got) {
-      // Don't consume newline, need to produce whitespace token
-      if (buf[num_chars] == '\n') {
-        end_of_line = true;
-        break;
-      }
-      num_chars++;
+    const char *nl = memchr(buf, '\n', got);
+    size_t num_chars;
+    if (nl == NULL) {
+      num_chars = got;
+    } else {
+      num_chars = (size_t)(nl - buf);
+      end_of_line = true;
     }
 
     lex_eat(lex, num_chars);
@@ -783,7 +782,8 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
   char *str = malloc(str_size);
   TSCFG_CHECK_MALLOC(str);
 
-  while (true) {
+  bool end_of_string = false;
+  do {
     assert(LEX_PEEK_BATCH_SIZE >= 4); // Look for triple quote plus one
 
     // Resize more aggressively since strings are often long
@@ -797,37 +797,44 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
       str_size = new_size;
     }
 
-    char *pos = &str[len];
+    char *buf = &str[len];
 
     size_t got = 0;
-    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     size_t to_append = 0;
     if (got < 3) {
       lex_report_err(lex, "Unterminated \"\"\" string");
       return TSCFG_ERR_SYNTAX;
-    } else if (memcmp(pos, "\"\"\"", 3) == 0) {
-      // Need to match last """ according to HOCON
-      if (got == 4 && pos[3] == '"') {
-        to_append = 1; // First " is part of string
-      } else {
-        // Last """ in string
-        lex_eat(lex, 3);
-        break;
-      }
+    }
+
+    const char *quote = memchr(buf, '\"', got);
+    if (quote == NULL) {
+      to_append = got;
     } else {
-      // First character plus any non-quotes are definitely in string
-      to_append = 1;
-      while (to_append < LEX_PEEK_BATCH_SIZE && pos[to_append] != '"') {
-        to_append++;
+      size_t before_quote = quote - buf;
+      to_append = before_quote;
+      if (got - before_quote < 4) {
+        // Need to advance further to check quotes
+      } else if (memcmp(quote, "\"\"\"", 3) == 0) {
+        // Need to match last """ according to HOCON
+        if (quote[3] == '"') {
+          to_append++; // First " is part of string
+        } else {
+          // Closing """
+          end_of_string = true;
+        }
+      } else {
+        // Last quote could be part of end quote
+        to_append += 2;
       }
     }
 
     assert(to_append != 0);
     lex_eat(lex, to_append);
     len += to_append;
-  }
+  } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
   str[len] = '\0';

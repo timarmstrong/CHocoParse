@@ -35,7 +35,9 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
 static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
-static tscfg_rc item_sep(ts_parse_state *state, bool *saw_sep);
+static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
+                   bool *saw_comment, tscfg_tok **toks, int *tok_count,
+                   tscfg_tok_tag *next_tag);
 
 static tscfg_rc key(ts_parse_state *state);
 static tscfg_rc value(ts_parse_state *state);
@@ -51,6 +53,7 @@ static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool skip_ws, bool *match);
 
+static void free_toks(tscfg_tok *toks, int count);
 static void pop_toks(ts_parse_state *state, int count);
 static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
@@ -131,7 +134,7 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
   rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
 
-  bool another_item = true;
+  bool no_more_items = false;
   do {
     // Check for close brace or EOF.
     // Whitespace should already be consumed.
@@ -154,15 +157,39 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
     rc = value(state);
     TSCFG_CHECK(rc);
 
-    // TODO: new to rework it's ambiguous until now whether concat or sep
+    // Loop until found sep
+    while (true) {
+      // Separator: comma or newline
+      bool sep = false, comment = false;
+      tscfg_tok *toks;
+      int tok_count;
+      rc = concat_or_item_sep(state, &sep, &comment, &toks, &tok_count,
+                              &tag);
+      TSCFG_CHECK(rc);
 
-    // Separator: comma or newline
-    bool another_item = false;
-    rc = item_sep(state, &another_item);
-    TSCFG_CHECK(rc);
+      if (sep) {
+        // Ready for next item
+        free_toks(toks, tok_count);
+        break;
+      } else if (tag == TSCFG_TOK_CLOSE_BRACE ||
+                 tag == TSCFG_TOK_EOF) {
+        free_toks(toks, tok_count);
+        no_more_items = true;
+        break;
+      } else {
+        // Interpret as concatenation with next token
+        if (comment) {
+          // TODO: I think comments are invalid here
+          free_toks(toks, tok_count);
+          tscfg_report_err("Comments not allowed between tokens here");
+          return TSCFG_ERR_SYNTAX;
+        }
 
-    // TODO: check for comma/newlines, if so continue
-  } while (another_item);
+        // TODO: implement concat
+        return TSCFG_ERR_UNIMPL;
+      }
+    }
+  } while (!no_more_items);
 
   tscfg_tok_tag tag;
   rc = peek_tag(state, &tag);
@@ -218,9 +245,20 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
 }
 
 /*
- * Search for item separator (newline or comma).
+ * Handle case where we could have a value concatenation or item separator.
+ *
+ * Consumes all whitespace tokens and separators.
+ *
+ * Syntax error on double separator
+ *
+ * saw_sep: if saw item separator (newline or comma)
+ * saw_comment: if there was a comment token
+ * toks/tok_count: array of tokens consumed
+ * tag: tag of text token
  */
-static tscfg_rc item_sep(ts_parse_state *state, bool *saw_sep) {
+static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
+                   bool *saw_comment, tscfg_tok **toks, int *tok_count,
+                   tscfg_tok_tag *next_tag) {
   // TODO
   return TSCFG_ERR_UNIMPL;
 }
@@ -373,6 +411,18 @@ static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
 }
 
 /*
+ * Free strings of any tokens.
+ */
+static void free_toks(tscfg_tok *toks, int count) {
+  for (int i = 0; i < count; i++) {
+    tscfg_tok *tok = &toks[i];
+    if (tok->str != NULL) {
+      free(tok->str);
+    }
+  }
+}
+
+/*
  * Remove leading tokens from input.
  *
  * Caller must ensure that there are at least count tokens.
@@ -384,12 +434,7 @@ static void pop_toks(ts_parse_state *state, int count) {
   assert(count <= state->ntoks);
 
   // Cleanup memory first
-  for (int i = 0; i < count; i++) {
-    tscfg_tok *tok = &state->toks[i];
-    if (tok->str != NULL) {
-      free(tok->str);
-    }
-  }
+  free_toks(state->toks, count);
 
   memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
   state->ntoks -= count;

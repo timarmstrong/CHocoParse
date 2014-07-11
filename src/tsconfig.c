@@ -36,7 +36,11 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
 static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
+static tscfg_rc peek_tok2(ts_parse_state *state, tscfg_tok *toks,
+                       int count, int *got, bool include_ws);
 static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag);
+static tscfg_rc peek_tag2(ts_parse_state *state, tscfg_tok_tag *tag,
+                         bool include_ws);
 static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
                        bool *match);
 
@@ -183,13 +187,20 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
   va_end(args);
 }
 
+static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
+                       int count, int *got) {
+  bool include_ws = true; // Default to including whitespace
+  return peek_tok2(state, toks, count, got, include_ws);
+}
+
 /*
  * Peek ahead into tokens without removing
  * count: number of tokens to look ahead
  * got: number of tokens got, less than len iff end of file
+ * ignore_whitespace: true if we will ignore all whitespace
  */
-static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
-                       int count, int *got) {
+static tscfg_rc peek_tok2(ts_parse_state *state, tscfg_tok *toks,
+                       int count, int *got, bool include_ws) {
   tscfg_rc rc;
 
   // Resize token buffer to be large enough
@@ -201,8 +212,6 @@ static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
     state->toks_size = count;
   }
 
-
-
   while (state->ntoks < count) {
     if (state->ntoks > 0 &&
         state->toks[state->ntoks - 1].tag == TSCFG_TOK_EOF) {
@@ -210,7 +219,9 @@ static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
       break;
     }
 
-    rc = tscfg_read_tok(&state->lex_state, &state->toks[state->ntoks]);
+    tscfg_lex_opts opts = { .include_ws_str = include_ws,
+                            .include_comm_str = false };
+    rc = tscfg_read_tok(&state->lex_state, &state->toks[state->ntoks], opts);
     TSCFG_CHECK(rc);
 
     state->ntoks++;
@@ -221,13 +232,20 @@ static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
   return TSCFG_OK;
 }
 
+static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag) {
+  // Include whitespace by default
+  bool include_ws = true;
+  return peek_tag2(state, tag, include_ws);
+}
+
 /*
  * tag: set to next tag, TSCFG_TOK_EOF if no more
  */
-static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag) {
+static tscfg_rc peek_tag2(ts_parse_state *state, tscfg_tok_tag *tag,
+                         bool include_ws) {
   tscfg_tok tok;
   int got;
-  tscfg_rc rc = peek_tok(state, &tok, 1, &got);
+  tscfg_rc rc = peek_tok2(state, &tok, 1, &got, include_ws);
   TSCFG_CHECK(rc);
 
   if (got == 0) {
@@ -257,7 +275,9 @@ static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
 /*
  * Remove leading tokens from input.
  *
- * Caller must ensure that there are at least count tokens
+ * Caller must ensure that there are at least count tokens.
+ *
+ * This will free any strings not set to NULL.
  */
 static void pop_toks(ts_parse_state *state, int count) {
   assert(count >= 0);
@@ -284,7 +304,7 @@ static tscfg_rc skip_whitespace(ts_parse_state *state) {
   while (true) {
     tscfg_tok_tag tag;
 
-    rc = peek_tag(state, &tag);
+    rc = peek_tag2(state, &tag, false);
     TSCFG_CHECK(rc);
 
     if (tag == TSCFG_TOK_WS ||

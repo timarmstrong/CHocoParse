@@ -14,16 +14,23 @@
 
 #include "tsconfig.h"
 
+typedef struct {
+  bool include_ws_str : 1; // Include whitespace string
+  bool include_comm_str : 1; // Include comment strings
+} tscfg_lex_opts;
 
 typedef enum {
   /* Special tokens: don't include string */
   TSCFG_TOK_INVALID = 0, // Special tag for invalid token
   TSCFG_TOK_EOF, // Special token for end of file
 
-  /* Special whitespace tokens: don't include string */
+  /* Special whitespace tokens: include string */
   // TODO: need to include whitespace data for concatenation
   TSCFG_TOK_WS, // Whitespace without newline
   TSCFG_TOK_WS_NEWLINE, // Whitespace with newline
+
+  /* Comment: don't include string */
+  TSCFG_TOK_COMMENT,
 
   /* Paired punctuation tokens: don't include string */
   TSCFG_TOK_OPEN_BRACE,
@@ -81,7 +88,8 @@ void tscfg_lex_finalize(tscfg_lex_state *lex);
 
   tok: unless error, filled in with next token.  Special tag used for EOF.
  */
-tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok);
+tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
+                        tscfg_lex_opts opts);
 
 /*
  * Take ownership of string from token.

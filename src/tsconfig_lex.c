@@ -27,13 +27,14 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static void lex_eat(tscfg_lex_state *lex, size_t bytes);
 
-static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read,
-                                  bool *newline);
-static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read);
-static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read);
-static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read);
-static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
-                                  bool *newline);
+static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
+                                     bool include_str);
+static tscfg_rc extract_comment_or_hocon_unquoted(tscfg_lex_state *lex,
+                                tscfg_tok *tok, bool include_comm_str);
+static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
+                                     bool include_str);
+static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
+                                     bool include_str);
 
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c, tscfg_tok *tok);
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok);
@@ -48,6 +49,10 @@ static bool is_hocon_whitespace(char c);
 static bool is_hocon_newline(char c);
 static bool is_hocon_unquoted_char(char c);
 static bool is_comment_start(const char *buf, size_t len);
+
+// TODO: doesn't match HOCON spec
+#define CASE_HOCON_WHITESPACE \
+  case ' ': case '\t': case '\n': case '\r'
 
 static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
 
@@ -73,25 +78,12 @@ void tscfg_lex_finalize(tscfg_lex_state *lex) {
   lex->buf_len = 0;
 }
 
-tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
+tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
+                        tscfg_lex_opts opts) {
   assert(lex != NULL);
   assert(tok != NULL);
 
   tscfg_rc rc;
-
-  // First consume any comments or whitespace
-  size_t read = 0;
-  bool saw_newline = false;
-  rc = eat_hocon_comm_ws(lex, &read, &saw_newline);
-  TSCFG_CHECK(rc);
-
-  // TODO: need to accumulate whitespace into token
-  // TODO: do we need to have comment tokens??
-  if (saw_newline) {
-    set_nostr_tok(TSCFG_TOK_WS_NEWLINE, tok);
-
-    return TSCFG_OK;
-  }
 
   // Next character should be start of token.
   char c;
@@ -107,6 +99,8 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
   assert(got == 1);
 
   switch (c) {
+    CASE_HOCON_WHITESPACE:
+      return extract_hocon_ws(lex, tok, opts.include_ws_str);
     case '"':
       // string, either single quoted or triple quoted
       return extract_hocon_str(lex, tok);
@@ -137,6 +131,13 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok) {
     case 'n':
       // try to parse as keyword, otherwise unquoted string
       return extract_keyword_or_hocon_unquoted(lex, c, tok);
+
+    case '#':
+      lex_eat(lex, 1);
+      return extract_line_comment(lex, tok, opts.include_comm_str);
+
+    case '/':
+      return extract_comment_or_hocon_unquoted(lex, tok, opts.include_comm_str);
 
     default:
       if (is_hocon_unquoted_char(c)) {
@@ -276,92 +277,67 @@ static void lex_eat(tscfg_lex_state *lex, size_t bytes) {
   lex->buf_len = remaining;
 }
 
-/*
- * Consume comments and whitespace.
- * newline: set to true if we saw at least one newline
- */
-static tscfg_rc eat_hocon_comm_ws(tscfg_lex_state *lex, size_t *read,
-                                  bool *newline) {
-  tscfg_rc rc;
-  *newline = false;
-  size_t total_read = 0, iter_read;
-  do {
-    size_t ws_read = 0, comm_read = 0;
-    bool newline2;
-    // Follows JSON whitespace rules
-    rc = eat_hocon_whitespace(lex, &ws_read, &newline2);
-    TSCFG_CHECK(rc);
-
-    if (newline2) {
-      *newline = true;
-    }
-
-    rc = eat_hocon_comment(lex, &comm_read);
-    TSCFG_CHECK(rc);
-
-    iter_read = ws_read + comm_read;
-    total_read += iter_read;
-  } while (iter_read > 0);
-
-  *read = total_read;
-
-  return TSCFG_OK;
-}
-
-static tscfg_rc eat_hocon_comment(tscfg_lex_state *lex, size_t *read) {
+static tscfg_rc extract_comment_or_hocon_unquoted(tscfg_lex_state *lex,
+                                tscfg_tok *tok, bool include_comm_str) {
   tscfg_rc rc;
 
-  *read = 0;
-
-  /*
-   * Look ahead two characters for / followed by / or * or one for #
-   */
-  char c[2];
+  char buf[2];
   size_t got;
-  rc = lex_peek(lex, c, 2, &got);
+  rc = lex_peek(lex, buf, 2, &got);
   TSCFG_CHECK(rc);
 
-  if (got >= 1 && c[0] == '#') {
-    lex_eat(lex, 1);
-    (*read)++;
+  assert(buf[0] == '/'); // Only case handled
 
-    size_t line_read = 0;
-    rc = eat_rest_of_line(lex, &line_read);
-    TSCFG_CHECK(rc);
-    (*read) += line_read;
-  } else if (got == 2 &&
-      c[0] == '/' &&
-      (c[1] == '/' || c[1] == '*')) {
-
+  if (buf[1] == '/') {
     lex_eat(lex, 2);
-    (*read) += 2;
-
-    if (c[1] == '/') {
-      size_t line_read;
-      rc = eat_rest_of_line(lex, &line_read);
-      TSCFG_CHECK(rc);
-      (*read) += line_read;
-    } else {
-      assert(c[1] == '*');
-      size_t comm_read = 0;
-      rc = eat_until_comm_end(lex, &comm_read);
-      TSCFG_CHECK(rc);
-      (*read) += comm_read;
-    }
+    return extract_line_comment(lex, tok, include_comm_str);
+  } else if (buf[1] == '*') {
+    lex_eat(lex, 2);
+    return extract_multiline_comment(lex, tok, include_comm_str);
+  } else {
+    // Not comment, interpret as unquoted token
+    return extract_hocon_unquoted(lex, tok);
   }
 
-  return TSCFG_OK;
+  // TODO: finishin implementing
+  return TSCFG_ERR_UNIMPL;
 }
 
-static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read) {
+static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
+                                     bool include_str) {
   tscfg_rc rc;
 
-  *read = 0;
+  size_t len = 0, str_size;
+  char *str = NULL;
+  if (include_str) {
+    str_size = 32;
+    str = malloc(str_size);
+    TSCFG_CHECK_MALLOC(str);
+  } else {
+    str_size = 0;
+  }
+
+  char buf_storage[LEX_PEEK_BATCH_SIZE];
 
   bool end_of_line = false;
 
   while (!end_of_line) {
-    char buf[LEX_PEEK_BATCH_SIZE];
+
+    if (include_str) {
+      // Resize more aggressively since strings are often long
+      size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+      if (str_size < min_size) {
+        size_t new_size = str_size * 2;
+        new_size = (new_size > min_size) ? new_size : min_size;
+        void *tmp = realloc(str, new_size);
+        TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+        str = tmp;
+        str_size = new_size;
+      }
+    }
+
+    char *buf = include_str ? &str[len] : buf_storage;
+
     size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
@@ -370,34 +346,74 @@ static tscfg_rc eat_rest_of_line(tscfg_lex_state *lex, size_t *read) {
       break;
     }
 
-    size_t pos = 0;
-    while (pos < got) {
+    size_t num_chars = 0;
+    while (num_chars < got) {
       // Make sure to consume newline
-      if (buf[pos++] == '\n') {
+      if (buf[num_chars++] == '\n') {
         end_of_line = true;
         break;
       }
     }
 
-    lex_eat(lex, pos);
-    (*read) += pos;
+    lex_eat(lex, num_chars);
+    len += num_chars;
+  }
+
+  tok->tag = TSCFG_TOK_COMMENT;
+  if (include_str) {
+    str[len] = '\0';
+    tok->length = len;
+    tok->str = str;
+  } else {
+    tok->length = 0;
+    tok->str = 0;
   }
 
   return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
 }
 
 /*
- * Search for end of multiline comment
+ * Search for end of multiline comment, i.e * then /
  */
-static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
+static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
+                                     bool include_str) {
   tscfg_rc rc;
+
+  size_t len = 0, str_size;
+  char *str = NULL;
+  if (include_str) {
+    str_size = 64;
+    str = malloc(str_size);
+    TSCFG_CHECK_MALLOC(str);
+  } else {
+    str_size = 0;
+  }
+
+  char buf_storage[LEX_PEEK_BATCH_SIZE];
 
   bool in_comment = true;
 
-  *read = 0;
-
   while (in_comment) {
-    char buf[LEX_PEEK_BATCH_SIZE];
+
+    if (include_str) {
+      // Resize more aggressively since comments are often long
+      size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+      if (str_size < min_size) {
+        size_t new_size = str_size * 2;
+        new_size = (new_size > min_size) ? new_size : min_size;
+        void *tmp = realloc(str, new_size);
+        TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+        str = tmp;
+        str_size = new_size;
+      }
+    }
+
+    char *buf = include_str ? &str[len] : buf_storage;
+
     size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
@@ -406,46 +422,86 @@ static tscfg_rc eat_until_comm_end(tscfg_lex_state *lex, size_t *read) {
       // Cannot be comment close, therefore unclosed comment
 
       lex_eat(lex, got);
-      (*read) += got;
+      len += got;
 
       lex_report_err(lex, "/* comment without matching */");
       return TSCFG_ERR_SYNTAX;
     }
 
-    size_t pos = 0;
-    while (pos < got - 1) {
-      if (buf[pos] == '*' && buf[pos + 1] == '/') {
-        pos += 2;
+    size_t num_chars = 0;
+    while (num_chars < got - 1) {
+      if (buf[num_chars] == '*' && buf[num_chars + 1] == '/') {
+        num_chars += 2;
         in_comment = false;
         break;
       } else {
         // May not need to check next position
-        int advance = (buf[pos + 1] == '*') ? 1 : 2;
-        pos += advance;
+        int advance = (buf[num_chars + 1] == '*') ? 1 : 2;
+        num_chars += advance;
       }
     }
 
-    lex_eat(lex, pos);
-    (*read) += pos;
+    lex_eat(lex, num_chars);
+    len += num_chars;
+  }
+
+  tok->tag = TSCFG_TOK_COMMENT;
+  if (include_str) {
+    str[len] = '\0';
+    tok->length = len;
+    tok->str = str;
+  } else {
+    tok->length = 0;
+    tok->str = 0;
   }
 
   return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
 }
 
 
 /*
  * Remove any leading whitespace characters from input.
- * newline: set to true if saw at least one newline
+ * tok: fill in tok with appropriate type depending on whether we saw at least
+ *      one newline.
+ * include_str: if true, include string data
  */
-static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
-                                  bool *newline) {
+static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
+                                     bool include_str) {
   tscfg_rc rc;
 
-  *read = 0;
-  *newline = false;
+  size_t len = 0, str_size;
+  char *str = NULL;
+  if (include_str) {
+    str_size = 128;
+    str = malloc(str_size);
+    TSCFG_CHECK_MALLOC(str);
+  } else {
+    str_size = 0;
+  }
+
+  char buf_storage[LEX_PEEK_BATCH_SIZE];
+  bool saw_newline = false;
 
   while (true) {
-    char buf[LEX_PEEK_BATCH_SIZE];
+
+    if (include_str) {
+      // Resize more aggressively since strings are often long
+      size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
+      if (str_size < min_size) {
+        size_t new_size = str_size * 2;
+        new_size = (new_size > min_size) ? new_size : min_size;
+        void *tmp = realloc(str, new_size);
+        TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+        str = tmp;
+        str_size = new_size;
+      }
+    }
+    char *buf = include_str ? &str[len] : buf_storage;
+
     size_t got;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK(rc);
@@ -456,14 +512,14 @@ static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
     while (ws_chars < got &&
            is_hocon_whitespace(buf[ws_chars])) {
       if (is_hocon_newline(buf[ws_chars])) {
-        *newline = true;
+        saw_newline = true;
       }
       ws_chars++;
     }
 
     if (ws_chars > 0) {
       lex_eat(lex, ws_chars);
-      (*read) += ws_chars;
+      len += ws_chars;
     }
 
     if (ws_chars < got || got == 0) {
@@ -472,7 +528,21 @@ static tscfg_rc eat_hocon_whitespace(tscfg_lex_state *lex, size_t *read,
     }
   }
 
+  tok->tag = saw_newline ? TSCFG_TOK_WS_NEWLINE : TSCFG_TOK_WS;
+  if (include_str) {
+    str[len] = '\0';
+    tok->length = len;
+    tok->str = str;
+  } else {
+    tok->length = 0;
+    tok->str = 0;
+  }
+
   return TSCFG_OK;
+
+cleanup:
+  free(str);
+  return rc;
 }
 
 /*
@@ -534,9 +604,9 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
   }
 
   tok->tag = TSCFG_TOK_NUMBER;
+  str[len] = '\0';
   tok->length = len;
   tok->str = str;
-  tok->str[tok->length] = '\0';
   return TSCFG_OK;
 }
 
@@ -613,9 +683,9 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
+  str[len] = '\0';
   tok->length = len;
   tok->str = str;
-  tok->str[tok->length] = '\0';
   return TSCFG_OK;
 
 cleanup:
@@ -682,15 +752,14 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
   }
 
   tok->tag = TSCFG_TOK_UNQUOTED;
+  str[len] = '\0';
   tok->length = len;
   tok->str = str;
-  tok->str[tok->length] = '\0';
   return TSCFG_OK;
 
 cleanup:
   free(str);
   return rc;
-
 }
 
 /*
@@ -770,9 +839,9 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   } while (!end_of_tok);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
+  str[len] = '\0';
   tok->length = len;
   tok->str = str;
-  tok->str[tok->length] = '\0';
   return TSCFG_OK;
 }
 
@@ -826,14 +895,11 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
 }
 
 /*
- * TODO: doesn't match HOCON spec
+ * Check if whitespace
  */
 static bool is_hocon_whitespace(char c) {
   switch (c) {
-    case ' ':
-    case '\t':
-    case '\n':
-    case '\r':
+    CASE_HOCON_WHITESPACE:
       return true;
     default:
       return false;

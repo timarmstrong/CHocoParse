@@ -223,6 +223,7 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
   switch (maybe_tag) {
     case TSCFG_TOK_EQUAL:
     case TSCFG_TOK_COLON:
+    case TSCFG_TOK_PLUSEQUAL:
       pop_toks(state, 1);
       if (tag != NULL) {
         *tag = maybe_tag;

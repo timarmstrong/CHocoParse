@@ -34,6 +34,12 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
 static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
 
+static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
+static tscfg_rc item_sep(ts_parse_state *state, bool *saw_sep);
+
+static tscfg_rc key(ts_parse_state *state);
+static tscfg_rc value(ts_parse_state *state);
+
 static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
 static tscfg_rc peek_tok_skip_ws(ts_parse_state *state, tscfg_tok *toks,
@@ -122,25 +128,110 @@ cleanup:
 static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
   tscfg_rc rc;
 
-  // Only handle empty body for now
-  tscfg_tok_tag tag;
-  rc = peek_tag_skip_ws(state, &tag);
+  rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
+
+  bool another_item = true;
+  do {
+    // Check for close brace or EOF.
+    // Whitespace should already be consumed.
+    tscfg_tok_tag tag;
+    rc = peek_tag(state, &tag);
+    TSCFG_CHECK(rc);
+    if (tag == TSCFG_TOK_CLOSE_BRACE ||
+        tag == TSCFG_TOK_EOF) {
+      return TSCFG_OK;
+    }
+
+    // TODO: check for include file and merge object
+
+    // Separator before value
+    rc = kv_sep(state, NULL);
+    TSCFG_CHECK(rc);
+
+    // TODO
+    // value: nested object, or token or expression, or multiple tokens
+    rc = value(state);
+    TSCFG_CHECK(rc);
+
+    // TODO: new to rework it's ambiguous until now whether concat or sep
+
+    // Separator: comma or newline
+    bool another_item = false;
+    rc = item_sep(state, &another_item);
+    TSCFG_CHECK(rc);
+
+    // TODO: check for comma/newlines, if so continue
+  } while (another_item);
+
+  tscfg_tok_tag tag;
+  rc = peek_tag(state, &tag);
+  TSCFG_CHECK(rc);
+
   if (tag == TSCFG_TOK_CLOSE_BRACE ||
       tag == TSCFG_TOK_EOF) {
     return TSCFG_OK;
+  } else {
+    tscfg_report_err("Expected end of object but got something else.");
+    return TSCFG_ERR_SYNTAX;
+  }
+}
+
+/*
+ * Look for key/value separator.
+ *
+ * separators: ':', '=', implied before  open brace
+ * Consume tokens unless the separator.  Skips whitespace.
+ *
+ * Fails if key/value separator not found.
+ */
+static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
+  tscfg_rc rc;
+
+  tscfg_tok_tag maybe_tag;
+
+  rc = peek_tag_skip_ws(state, &maybe_tag);
+  TSCFG_CHECK(rc);
+
+  switch (maybe_tag) {
+    case TSCFG_TOK_EQUAL:
+    case TSCFG_TOK_COLON:
+      pop_toks(state, 1);
+      if (tag != NULL) {
+        *tag = maybe_tag;
+      }
+      return TSCFG_OK;
+    case TSCFG_TOK_OPEN_BRACE:
+      if (tag != NULL) {
+        *tag = maybe_tag;
+      }
+      return TSCFG_OK;
+    case TSCFG_TOK_EOF:
+      tscfg_report_err("End of input before value matching key");
+      return TSCFG_ERR_SYNTAX;
+    default:
+      tscfg_report_err("Expected key/value separator or open brace, but "
+                       "got something else.");
+      return TSCFG_ERR_SYNTAX;
   }
 
-  // TODO: implement
-  // K/V pair:
-  // ---------
-  // * quoted or unquoted key token
-  // * separator: ':', '=', or not needed if open brace
-  // * value: nested object, or token or expression, or multiple tokens
-  // * optional comma - not needed if line separator
-  // Include:
-  // --------
-  // * include file and merge object
+}
+
+/*
+ * Search for item separator (newline or comma).
+ */
+static tscfg_rc item_sep(ts_parse_state *state, bool *saw_sep) {
+  // TODO
+  return TSCFG_ERR_UNIMPL;
+}
+
+static tscfg_rc key(ts_parse_state *state) {
+  // TODO
+  return TSCFG_ERR_UNIMPL;
+}
+
+static tscfg_rc value(ts_parse_state *state) {
+  // TODO
   return TSCFG_ERR_UNIMPL;
 }
 

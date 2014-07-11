@@ -21,12 +21,14 @@ typedef struct {
    * - arr_start(void *s);
    * - arr_end(void *s);
    * Key/Value start follow by some number of tokens, arrays, and objects
+   * Key tokens: true/false/null, quoted/unquoted strings, numbers,
+   *  and whitespace (if between other tokens).
    * - key_val_start(void *s, tscfg_tok *key_toks, int nkey_toks,
    *                 tscfg_tok_tag sep);
    * - key_val_end(void *s);
    * - val_start(void *s); // Array value
    * - val_end(void *s);
    * Tokens: true/false/null, quoted/unquoted strings, numbers,
-   *  variables, and whitespace (if whitespace is between other tokens).
+   *  whitespace (if between other tokens), and variables.
    * - token(void *s, tscfg_tok tok);
 } tscfg_reader;

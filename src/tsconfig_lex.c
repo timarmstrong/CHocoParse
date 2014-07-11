@@ -364,11 +364,12 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     size_t num_chars = 0;
     while (num_chars < got) {
-      // Make sure to consume newline
-      if (buf[num_chars++] == '\n') {
+      // Don't consume newline, need to produce whitespace token
+      if (buf[num_chars] == '\n') {
         end_of_line = true;
         break;
       }
+      num_chars++;
     }
 
     lex_eat(lex, num_chars);

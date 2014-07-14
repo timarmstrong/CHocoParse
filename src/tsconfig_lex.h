@@ -25,7 +25,7 @@ typedef struct {
  */
 typedef struct {
   // Raw input
-  ts_config_input in;
+  tsconfig_input in;
 
   // Buffer for lookahead
   unsigned char *buf;
@@ -33,7 +33,7 @@ typedef struct {
   size_t buf_len;
 } tscfg_lex_state;
 
-tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, ts_config_input in);
+tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in);
 void tscfg_lex_finalize(tscfg_lex_state *lex);
 
 /*

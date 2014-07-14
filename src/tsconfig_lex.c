@@ -60,7 +60,7 @@ static bool is_comment_start(const char *buf, size_t len);
 
 static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
 
-tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, ts_config_input in) {
+tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in) {
   lex->in = in;
 
   size_t buf_init_size = 512;
@@ -252,7 +252,7 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
  */
 static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes) {
-  ts_config_input *in = &lex->in;
+  tsconfig_input *in = &lex->in;
   if (in->kind == TS_CONFIG_IN_FILE) {
 
     size_t read = fread(buf, 1, bytes, in->data.f);

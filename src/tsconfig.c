@@ -28,11 +28,11 @@ typedef struct {
   int ntoks;
 } ts_parse_state;
 
-static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in);
+static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in);
 static void ts_parse_state_finalize(ts_parse_state *state);
 static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
-static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg);
+static tscfg_rc parse_hocon_body(ts_parse_state *state, tsconfig_tree *cfg);
 
 static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
@@ -59,7 +59,7 @@ static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
 static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline);
 
-tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg) {
+tscfg_rc parse_tsconfig(tsconfig_input in, tscfg_fmt fmt, tsconfig_tree *cfg) {
   if (fmt == TSCFG_HOCON) {
     return parse_hocon(in, cfg);
   } else {
@@ -68,7 +68,7 @@ tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg) {
   }
 }
 
-tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg) {
+tscfg_rc parse_hocon(tsconfig_input in, tsconfig_tree *cfg) {
   ts_parse_state state;
   tscfg_rc rc = TSCFG_ERR_UNKNOWN;
 
@@ -128,7 +128,7 @@ cleanup:
 /*
  * Parse contents between { and }.
  */
-static tscfg_rc parse_hocon_body(ts_parse_state *state, ts_config *cfg) {
+static tscfg_rc parse_hocon_body(ts_parse_state *state, tsconfig_tree *cfg) {
   tscfg_rc rc;
 
   rc = skip_whitespace(state, NULL);
@@ -274,7 +274,7 @@ static tscfg_rc value(ts_parse_state *state) {
   return TSCFG_ERR_UNIMPL;
 }
 
-static tscfg_rc ts_parse_state_init(ts_parse_state *state, ts_config_input in) {
+static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in) {
   tscfg_rc rc;
 
   rc = tscfg_lex_init(&state->lex_state, in);

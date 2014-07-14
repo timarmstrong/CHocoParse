@@ -10,6 +10,8 @@
 #ifndef __TSCONFIG_TOK_H
 #define __TSCONFIG_TOK_H
 
+#include <stddef.h>
+
 typedef enum {
   /* Special tokens: don't include string */
   TSCFG_TOK_INVALID = 0, // Special tag for invalid token

@@ -14,17 +14,8 @@
 
 #include <stdio.h>
 
-#include "tsconfig_data.h"
-
-typedef enum {
-  TSCFG_OK,
-  TSCFG_ERR_ARG, /* Invalid argument to function */
-  TSCFG_ERR_OOM, /* Out of memory */
-  TSCFG_ERR_SYNTAX, /* Invalid syntax in input */
-  TSCFG_ERR_IO, /* I/O error */
-  TSCFG_ERR_UNKNOWN,
-  TSCFG_ERR_UNIMPL,
-} tscfg_rc;
+#include "tsconfig_common.h"
+#include "tsconfig_tree.h"
 
 typedef enum {
   TSCFG_HOCON,
@@ -37,11 +28,11 @@ typedef enum {
   TS_CONFIG_IN_NONE,
   TS_CONFIG_IN_FILE,
   TS_CONFIG_IN_STR,
-} ts_config_input_kind;
+} tsconfig_input_kind;
 
 typedef struct {
   // TODO: tagged enum
-  ts_config_input_kind kind;
+  tsconfig_input_kind kind;
   union {
     FILE* f;
     struct {
@@ -50,16 +41,16 @@ typedef struct {
       size_t pos;
     } s;
   } data;
-} ts_config_input;
+} tsconfig_input;
 
 /*
  * Parse a typesafe config file using the specified format.
  */
-tscfg_rc parse_ts_config(ts_config_input in, tscfg_fmt fmt, ts_config *cfg);
+tscfg_rc parse_tsconfig(tsconfig_input in, tscfg_fmt fmt, tsconfig_tree *cfg);
 
 /*
  * Parse a typesafe config file in HOCON format.
  */
-tscfg_rc parse_hocon(ts_config_input in, ts_config *cfg);
+tscfg_rc parse_hocon(tsconfig_input in, tsconfig_tree *cfg);
 
 #endif // __TSCONFIG_H

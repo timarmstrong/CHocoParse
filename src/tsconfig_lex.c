@@ -47,16 +47,32 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
                                                   tscfg_tok *tok);
 
-static bool is_hocon_whitespace(char c);
-static bool is_hocon_newline(char c);
-static bool is_hocon_unquoted_char(char c);
+static bool is_hocon_whitespace(tscfg_char_t c);
+static bool is_hocon_newline(tscfg_char_t c);
+static bool is_hocon_unquoted_char(tscfg_char_t c);
 static bool is_comment_start(const char *buf, size_t len);
 
-// TODO: HOCON spec specifies unicode whitespace too
-#define CASE_HOCON_WHITESPACE \
-  case ' ': case '\t': case '\n': case '\r': case '\v': case '\f': \
+/* Unicode characters according to database:
+  http://www.unicode.org/Public/7.0.0/ucd/PropList.txt */
+#define CASE_UNICODE_ZS \
+  case 0x0020: case 0x00A0: case 0x1680: case 0x2000: case 0x2001: \
+  case 0x2002: case 0x2003: case 0x2004: case 0x2005: case 0x2006: \
+  case 0x2007: case 0x2008: case 0x2009: case 0x200A: case 0x202F: \
+  case 0x205F: case 0x3000
+
+#define CASE_UNICODE_ZL case 0x2028
+
+#define CASE_UNICODE_ZP case 0x2029
+
+#define CASE_OTHER_ASCII_WHITESPACE \
+  case '\t': case '\n': case '\r': case '\v': case '\f': \
   case 0x01C /* file sep */: case 0x01D /* group sep */: \
   case 0x01E /* record sep */: case 0x01F /* unit sep */
+
+
+#define CASE_HOCON_WHITESPACE \
+  CASE_UNICODE_ZS: CASE_UNICODE_ZL: CASE_UNICODE_ZP: case 0xFEFF /* BOM */: \
+  CASE_OTHER_ASCII_WHITESPACE
 
 static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
 
@@ -102,7 +118,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
   assert(got == 1);
 
-  switch (c) {
+  switch ((tscfg_char_t)c) {
     CASE_HOCON_WHITESPACE:
       return extract_hocon_ws(lex, tok, opts.include_ws_str);
     case '"':
@@ -986,7 +1002,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
 /*
  * Check if whitespace
  */
-static bool is_hocon_whitespace(char c) {
+static bool is_hocon_whitespace(tscfg_char_t c) {
   switch (c) {
     CASE_HOCON_WHITESPACE:
       return true;
@@ -999,7 +1015,7 @@ static bool is_hocon_whitespace(char c) {
  * Return true if character is to be treated semantically as newline\
  * according to the HOCON spec
  */
-static inline bool is_hocon_newline(char c) {
+static inline bool is_hocon_newline(tscfg_char_t c) {
   return (c == '\n');
 }
 
@@ -1008,7 +1024,7 @@ static inline bool is_hocon_newline(char c) {
  * Note that because it's valid to appear in unquoted text doesn't mean
  * that it should be greedily appended - special cases are handled elsewhere.
  */
-static bool is_hocon_unquoted_char(char c) {
+static bool is_hocon_unquoted_char(tscfg_char_t c) {
   switch (c) {
     case '$':
     case '"':

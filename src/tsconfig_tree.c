@@ -22,7 +22,10 @@ static int obj_kv_cmp(const void *p1, const void *p2);
 static void tscfg_val_invalidate(tscfg_val *v);
 
 /*
- * TODO: this approach cannot handle self-referential substitutions
+ * TODO: this approach cannot handle self-referential substitutions.
+ * Needed approach:
+ * - Resolve non-self-referential subs after final merge.
+ * - Detect self-referential subs before merge, handle specially
  */
 tscfg_rc tscfg_obj_merge_keys(tscfg_obj *obj) {
   tscfg_rc rc;

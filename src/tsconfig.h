@@ -15,6 +15,7 @@
 #include <stdio.h>
 
 #include "tsconfig_common.h"
+#include "tsconfig_reader.h"
 #include "tsconfig_tree.h"
 
 typedef enum {
@@ -44,13 +45,15 @@ typedef struct {
 } tsconfig_input;
 
 /*
- * Parse a typesafe config file using the specified format.
+ * Parse a typesafe config file to a tree using the specified format.
  */
-tscfg_rc parse_tsconfig(tsconfig_input in, tscfg_fmt fmt, tsconfig_tree *cfg);
+tscfg_rc tsconfig_parse_tree(tsconfig_input in, tscfg_fmt fmt,
+                        tsconfig_tree *cfg);
 
 /*
- * Parse a typesafe config file in HOCON format.
+ * Parse a typesafe config file with a custom reader.
  */
-tscfg_rc parse_hocon(tsconfig_input in, tsconfig_tree *cfg);
+tscfg_rc tsconfig_parse(tsconfig_input in, tscfg_fmt fmt,
+      tscfg_reader reader, void *reader_state);
 
 #endif // __TSCONFIG_H

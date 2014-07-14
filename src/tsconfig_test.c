@@ -23,7 +23,7 @@ int main(int argc, const char **argv) {
   config_in.kind = TS_CONFIG_IN_FILE;
   config_in.data.f = stdin;
 
-  rc = parse_tsconfig(config_in, TSCFG_HOCON, &cfg);
+  rc = tsconfig_parse_tree(config_in, TSCFG_HOCON, &cfg);
   if (rc != TSCFG_OK) {
     fprintf(stderr, "Error during parsing\n");
     return 1;

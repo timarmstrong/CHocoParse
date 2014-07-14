@@ -13,4 +13,5 @@ bin_PROGRAMS = bin/tsconfig_test
 bin_tsconfig_test_SOURCES = src/tsconfig_test.c
 bin_tsconfig_test_LDADD = lib/libtsconfig.la
 
-include_HEADERS = src/tsconfig.h src/tsconfig_common.h src/tsconfig_tree.h
+include_HEADERS = src/tsconfig.h src/tsconfig_common.h src/tsconfig_tree.h \
+      src/tsconfig_reader.h

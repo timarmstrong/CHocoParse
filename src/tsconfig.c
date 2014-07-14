@@ -21,6 +21,9 @@
 #include "tsconfig_lex.h"
 
 typedef struct {
+  tscfg_reader reader;
+  void *reader_state;
+
   tscfg_lex_state lex_state;
 
   tscfg_tok *toks;
@@ -28,11 +31,16 @@ typedef struct {
   int ntoks;
 } ts_parse_state;
 
-static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in);
+static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
+  tscfg_reader reader, void *reader_state);
 static void ts_parse_state_finalize(ts_parse_state *state);
 static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
 
-static tscfg_rc parse_hocon_body(ts_parse_state *state, tsconfig_tree *cfg);
+static tscfg_rc tree_reader_init(tscfg_reader *reader, void **reader_state);
+
+static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
+                            void *reader_state);
+static tscfg_rc parse_hocon_body(ts_parse_state *state);
 
 static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
@@ -59,20 +67,37 @@ static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
 static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline);
 
-tscfg_rc parse_tsconfig(tsconfig_input in, tscfg_fmt fmt, tsconfig_tree *cfg) {
+tscfg_rc tsconfig_parse_tree(tsconfig_input in, tscfg_fmt fmt,
+                              tsconfig_tree *cfg) {
+  tscfg_reader reader;
+  void *reader_state;
+  tscfg_rc rc = tree_reader_init(&reader, &reader_state);
+  TSCFG_CHECK(rc);
+
+  return tsconfig_parse(in, fmt, reader, reader_state);
+}
+
+static tscfg_rc tree_reader_init(tscfg_reader *reader, void **reader_state) {
+  // TODO: implement
+  return TSCFG_ERR_UNIMPL;
+}
+
+tscfg_rc tsconfig_parse(tsconfig_input in, tscfg_fmt fmt,
+      tscfg_reader reader, void *reader_state) {
   if (fmt == TSCFG_HOCON) {
-    return parse_hocon(in, cfg);
+    return parse_hocon(in, reader, reader_state);
   } else {
     tscfg_report_err("Invalid file format code %i", (int)fmt);
     return TSCFG_ERR_ARG;
   }
 }
 
-tscfg_rc parse_hocon(tsconfig_input in, tsconfig_tree *cfg) {
+static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
+    void *reader_state) {
   ts_parse_state state;
   tscfg_rc rc = TSCFG_ERR_UNKNOWN;
 
-  rc = ts_parse_state_init(&state, in);
+  rc = ts_parse_state_init(&state, in, reader, reader_state);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   // TODO: open square bracket also supported
@@ -85,7 +110,7 @@ tscfg_rc parse_hocon(tsconfig_input in, tsconfig_tree *cfg) {
   }
 
   // body of JSON
-  rc = parse_hocon_body(&state, cfg);
+  rc = parse_hocon_body(&state);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
   if (open_brace) {
@@ -128,7 +153,7 @@ cleanup:
 /*
  * Parse contents between { and }.
  */
-static tscfg_rc parse_hocon_body(ts_parse_state *state, tsconfig_tree *cfg) {
+static tscfg_rc parse_hocon_body(ts_parse_state *state) {
   tscfg_rc rc;
 
   rc = skip_whitespace(state, NULL);
@@ -274,8 +299,21 @@ static tscfg_rc value(ts_parse_state *state) {
   return TSCFG_ERR_UNIMPL;
 }
 
-static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in) {
+static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
+  tscfg_reader reader, void *reader_state) {
   tscfg_rc rc;
+
+  if (reader.obj_start == NULL || reader.obj_end == NULL ||
+      reader.arr_start == NULL || reader.arr_end == NULL ||
+      reader.key_val_start == NULL || reader.key_val_end == NULL ||
+      reader.val_start == NULL || reader.val_end == NULL ||
+      reader.token == NULL) {
+    tscfg_report_err("Reader has NULL function");
+    return TSCFG_ERR_ARG;
+  }
+
+  state->reader = reader;
+  state->reader_state = reader_state;
 
   rc = tscfg_lex_init(&state->lex_state, in);
   TSCFG_CHECK(rc);

@@ -74,6 +74,8 @@ tscfg_rc tsconfig_parse_tree(tsconfig_input in, tscfg_fmt fmt,
   tscfg_rc rc = tree_reader_init(&reader, &reader_state);
   TSCFG_CHECK(rc);
 
+  // TODO: additional processing to merge values, etc.
+
   return tsconfig_parse(in, fmt, reader, reader_state);
 }
 
@@ -158,6 +160,8 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
 
   rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
+  /*TODO
+    ok = state->reader.obj_start(state->reader_state); */
 
   bool no_more_items = false;
   do {
@@ -168,6 +172,8 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
     TSCFG_CHECK(rc);
     if (tag == TSCFG_TOK_CLOSE_BRACE ||
         tag == TSCFG_TOK_EOF) {
+      /*TODO
+       ok = state->reader.obj_end(state->reader_state); */
       return TSCFG_OK;
     }
 
@@ -177,6 +183,10 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
     rc = kv_sep(state, NULL);
     TSCFG_CHECK(rc);
 
+    /*TODO
+      ok = state->reader.key_val_start(state->reader_state,
+            key_toks, nkey_toks, sep); */
+
     // TODO
     // value: nested object, or token or expression, or multiple tokens
     rc = value(state);
@@ -184,6 +194,8 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
 
     // Loop until found sep
     while (true) {
+      // TODO: pass in tokens
+
       // Separator: comma or newline
       bool sep = false, comment = false;
       tscfg_tok *toks;
@@ -214,6 +226,8 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
         return TSCFG_ERR_UNIMPL;
       }
     }
+    /*TODO
+      ok = state->reader.key_val_end(state->reader_state); */
   } while (!no_more_items);
 
   tscfg_tok_tag tag;
@@ -222,6 +236,8 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
 
   if (tag == TSCFG_TOK_CLOSE_BRACE ||
       tag == TSCFG_TOK_EOF) {
+    /*TODO
+      ok = state->reader.obj_end(state->reader_state); */
     return TSCFG_OK;
   } else {
     tscfg_report_err("Expected end of object but got something else.");

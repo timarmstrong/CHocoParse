@@ -21,7 +21,7 @@
 // Max bytes per encoded UTF-8 character
 #define UTF8_MAX_BYTES 6
 
-typedef {
+typedef struct {
   char *str;
   size_t size; // Allocated size in bytes
   size_t len; // Data length in bytes
@@ -422,12 +422,12 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (include_str) {
       // Resize more aggressively since strings are often long
-      size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+      size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
       rc = strbuf_expand(&sb, min_size, true);
       TSCFG_CHECK(rc);
     }
 
-    char *buf = include_str ? &sb->str[sb->len] : buf_storage;
+    char *buf = include_str ? &sb.str[sb.len] : buf_storage;
 
     size_t got;
     rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -448,13 +448,13 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     }
 
     lex_eat_bytes(lex, num_chars);
-    sb->len += num_chars;
+    sb.len += num_chars;
   }
 
   tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
-    tok->length = sb->len;
-    tok->str = sb->str;
+    tok->length = sb.len;
+    tok->str = sb.str;
   } else {
     tok->length = 0;
     tok->str = 0;
@@ -486,12 +486,12 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (include_str) {
       // Resize more aggressively since comments are often long
-      size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+      size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
       rc = strbuf_expand(&sb, min_size, true);
       TSCFG_CHECK(rc);
     }
 
-    char *buf = include_str ? &sb->str[sb->len] : buf_storage;
+    char *buf = include_str ? &sb.str[sb.len] : buf_storage;
 
     size_t got;
     rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -501,7 +501,7 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       // Cannot be comment close, therefore unclosed comment
 
       lex_eat_bytes(lex, got);
-      sb->len += got;
+      sb.len += got;
 
       lex_report_err(lex, "/* comment without matching */");
       rc = TSCFG_ERR_SYNTAX;
@@ -523,13 +523,13 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     }
 
     lex_eat_bytes(lex, num_chars);
-    sb->len += num_chars;
+    sb.len += num_chars;
   }
 
   tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
-    tok->length = sb->len;
-    tok->str = sb->str;
+    tok->length = sb.len;
+    tok->str = sb.str;
   } else {
     tok->length = 0;
     tok->str = NULL;
@@ -565,11 +565,11 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (include_str) {
       // Resize more aggressively since strings are often long
-      size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+      size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
       rc = strbuf_expand(&sb, min_size, true);
       TSCFG_CHECK(rc);
     }
-    char *buf = include_str ? &sb->str[sb->len] : buf_storage;
+    char *buf = include_str ? &sb.str[sb.len] : buf_storage;
 
     size_t got;
     rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -590,7 +590,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (ws_chars > 0) {
       lex_eat_bytes(lex, ws_chars);
-      sb->len += ws_chars;
+      sb.len += ws_chars;
     }
 
     if ((ws_chars < got || got == 0) &&
@@ -602,8 +602,8 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
   tok->tag = saw_newline ? TSCFG_TOK_WS_NEWLINE : TSCFG_TOK_WS;
   if (include_str) {
-    tok->length = sb->len;
-    tok->str = sb->str;
+    tok->length = sb.len;
+    tok->str = sb.str;
   } else {
     tok->length = 0;
     tok->str = NULL;
@@ -628,17 +628,17 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
   rc = strbuf_init(&sb, 32);
   TSCFG_CHECK(rc);
 
-  sb->len = 1;
-  sb->str[0] = c;
+  sb.len = 1;
+  sb.str[0] = c;
 
   bool saw_dec_point = false;
 
   while (true) {
-    size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+    size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
     rc = strbuf_expand(sb, min_size, false);
     TSCFG_CHECK(rc);
 
-    char *pos = &sb->str[len];
+    char *pos = &sb.str[len];
     size_t got;
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
@@ -660,7 +660,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
 
     if (num_chars > 0) {
       lex_eat(lex, num_chars);
-      sb->len += num_chars;
+      sb.len += num_chars;
     }
 
     if (num_chars < got || got == 0) {
@@ -671,8 +671,8 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
   }
 
   tok->tag = TSCFG_TOK_NUMBER;
-  tok->length = sb->len;
-  tok->str = sb->str;
+  tok->length = sb.len;
+  tok->str = sb.str;
   return TSCFG_OK;
 
 cleanup:
@@ -713,7 +713,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   bool end_of_string = false;
 
   do {
-    size_t min_size = sb->len + 2;
+    size_t min_size = sb.len + 2;
     rc = strbuf_expand(&sb, min_size, false);
     TSCFG_CHECK(rc);
 
@@ -740,17 +740,17 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
       rc = extract_json_str_escape(lex, buf, got, &escaped, &escape_len);
       TSCFG_CHECK_GOTO(rc, cleanup);
 
-      sb->len++;
+      sb.len++;
       lex_eat(lex, escape_len);
     } else {
       lex_eat(lex, 1);
-      sb->str[sb->len++] = buf[0];
+      sb.str[sb.len++] = buf[0];
     }
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
-  tok->length = sb->len;
-  tok->str = sb->str;
+  tok->length = sb.len;
+  tok->str = sb.str;
   return TSCFG_OK;
 
 cleanup:
@@ -832,11 +832,11 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
     assert(LEX_PEEK_BATCH_SIZE >= 4); // Look for triple quote plus one
 
     // Resize more aggressively since strings are often long
-    size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+    size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
     rc = strbuf_expand(&sb, min_size, true);
     TSCFG_CHECK(rc);
 
-    char *buf = &sb->str[sb->len];
+    char *buf = &sb.str[sb.len];
 
     size_t got = 0;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -872,12 +872,12 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
 
     assert(to_append != 0);
     lex_eat(lex, to_append);
-    sb->len += to_append;
+    sb.len += to_append;
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
-  tok->length = sb->len;
-  tok->str = sb->str;
+  tok->length = sb.len;
+  tok->str = sb.str;
   return TSCFG_OK;
 
 cleanup:
@@ -898,12 +898,12 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
 
   bool end_of_tok = false;
   do {
-    size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+    size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
     rc = strbuf_expand(&sb, min_size, false);
     TSCFG_CHECK(rc);
 
     size_t got;
-    char *pos = &sb->str[len];
+    char *pos = &sb.str[len];
 
     assert(LEX_PEEK_BATCH_SIZE >= 2); // Need lookahead of at least two chars
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
@@ -947,7 +947,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
 
     if (to_append > 0) {
       lex_eat(lex, to_append);
-      sb->len += to_append;
+      sb.len += to_append;
     }
 
     if (got == 0) {
@@ -957,8 +957,8 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   } while (!end_of_tok);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
-  tok->length = sb->len;
-  tok->str = sb->str;
+  tok->length = sb.len;
+  tok->str = sb.str;
 
   return TSCFG_OK;
 

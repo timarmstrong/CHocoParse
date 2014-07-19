@@ -18,6 +18,15 @@
 // Default amount to buffer when searching ahead
 #define LEX_PEEK_BATCH_SIZE 32
 
+// Max bytes per encoded UTF-8 character
+#define UTF8_MAX_BYTES 6
+
+typedef {
+  char *str;
+  size_t size; // Allocated size in bytes
+  size_t len; // Data length in bytes
+} tscfg_strbuf;
+
 static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok);
 static inline tscfg_tok_tag tag_from_char(char c);
 
@@ -56,6 +65,11 @@ static bool is_hocon_whitespace(tscfg_char_t c);
 static bool is_hocon_newline(tscfg_char_t c);
 static bool is_hocon_unquoted_char(tscfg_char_t c);
 static bool is_comment_start(const char *buf, size_t len);
+
+static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size);
+static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
+                              bool aggressive);
+static void strbuf_free(tscfg_strbuf *sb);
 
 /* Unicode characters according to database:
   http://www.unicode.org/Public/7.0.0/ucd/PropList.txt */
@@ -234,7 +248,7 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
                          int nchars, int *got) {
   tscfg_rc rc;
   assert(nchars >= 0);
-  size_t max_bytes = (size_t)nchars * 4;
+  size_t max_bytes = (size_t)nchars * UTF8_MAX_BYTES;
 
   if (lex->buf_len < max_bytes) {
     // Attempt to read more
@@ -350,7 +364,7 @@ static void lex_eat(tscfg_lex_state *lex, int chars) {
     unsigned char b = lex->buf[byte_pos++];
     assert(b <= 127); // TODO: Implement utf-8
   }
-  
+
   lex_eat_bytes(lex, byte_pos);
 }
 
@@ -396,15 +410,9 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str) {
   tscfg_rc rc;
 
-  size_t len = 0, str_size;
-  char *str = NULL;
-  if (include_str) {
-    str_size = 32;
-    str = malloc(str_size);
-    TSCFG_CHECK_MALLOC(str);
-  } else {
-    str_size = 0;
-  }
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, include_str ? 32 : 0);
+  TSCFG_CHECK(rc);
 
   char buf_storage[LEX_PEEK_BATCH_SIZE];
 
@@ -414,18 +422,12 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (include_str) {
       // Resize more aggressively since strings are often long
-      size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
-      if (str_size < min_size) {
-        size_t new_size = str_size * 2;
-        new_size = (new_size > min_size) ? new_size : min_size;
-        void *tmp = realloc(str, new_size);
-        TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-        str = tmp;
-        str_size = new_size;
-      }
+      size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+      rc = strbuf_expand(&sb, min_size, true);
+      TSCFG_CHECK(rc);
     }
 
-    char *buf = include_str ? &str[len] : buf_storage;
+    char *buf = include_str ? &sb->str[sb->len] : buf_storage;
 
     size_t got;
     rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -446,14 +448,13 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     }
 
     lex_eat_bytes(lex, num_chars);
-    len += num_chars;
+    sb->len += num_chars;
   }
 
   tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
-    str[len] = '\0';
-    tok->length = len;
-    tok->str = str;
+    tok->length = sb->len;
+    tok->str = sb->str;
   } else {
     tok->length = 0;
     tok->str = 0;
@@ -462,7 +463,7 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -473,15 +474,9 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str) {
   tscfg_rc rc;
 
-  size_t len = 0, str_size;
-  char *str = NULL;
-  if (include_str) {
-    str_size = 64;
-    str = malloc(str_size);
-    TSCFG_CHECK_MALLOC(str);
-  } else {
-    str_size = 0;
-  }
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, include_str ? 64 : 0);
+  TSCFG_CHECK(rc);
 
   char buf_storage[LEX_PEEK_BATCH_SIZE];
 
@@ -491,18 +486,12 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (include_str) {
       // Resize more aggressively since comments are often long
-      size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
-      if (str_size < min_size) {
-        size_t new_size = str_size * 2;
-        new_size = (new_size > min_size) ? new_size : min_size;
-        void *tmp = realloc(str, new_size);
-        TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-        str = tmp;
-        str_size = new_size;
-      }
+      size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+      rc = strbuf_expand(&sb, min_size, true);
+      TSCFG_CHECK(rc);
     }
 
-    char *buf = include_str ? &str[len] : buf_storage;
+    char *buf = include_str ? &sb->str[sb->len] : buf_storage;
 
     size_t got;
     rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -512,13 +501,13 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       // Cannot be comment close, therefore unclosed comment
 
       lex_eat_bytes(lex, got);
-      len += got;
+      sb->len += got;
 
       lex_report_err(lex, "/* comment without matching */");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
-    
+
     // TODO: do we need to interpret as utf-8?
     size_t num_chars = 0;
     while (num_chars < got - 1) {
@@ -534,23 +523,22 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     }
 
     lex_eat_bytes(lex, num_chars);
-    len += num_chars;
+    sb->len += num_chars;
   }
 
   tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
-    str[len] = '\0';
-    tok->length = len;
-    tok->str = str;
+    tok->length = sb->len;
+    tok->str = sb->str;
   } else {
     tok->length = 0;
-    tok->str = 0;
+    tok->str = NULL;
   }
 
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -565,15 +553,9 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str) {
   tscfg_rc rc;
 
-  size_t len = 0, str_size;
-  char *str = NULL;
-  if (include_str) {
-    str_size = 128;
-    str = malloc(str_size);
-    TSCFG_CHECK_MALLOC(str);
-  } else {
-    str_size = 0;
-  }
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, include_str ? 128 : 0);
+  TSCFG_CHECK(rc);
 
   char buf_storage[LEX_PEEK_BATCH_SIZE];
   bool saw_newline = false;
@@ -583,18 +565,12 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (include_str) {
       // Resize more aggressively since strings are often long
-      size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
-      if (str_size < min_size) {
-        size_t new_size = str_size * 2;
-        new_size = (new_size > min_size) ? new_size : min_size;
-        void *tmp = realloc(str, new_size);
-        TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-        str = tmp;
-        str_size = new_size;
-      }
+      size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+      rc = strbuf_expand(&sb, min_size, true);
+      TSCFG_CHECK(rc);
     }
-    char *buf = include_str ? &str[len] : buf_storage;
-    
+    char *buf = include_str ? &sb->str[sb->len] : buf_storage;
+
     size_t got;
     rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
@@ -614,7 +590,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (ws_chars > 0) {
       lex_eat_bytes(lex, ws_chars);
-      len += ws_chars;
+      sb->len += ws_chars;
     }
 
     if ((ws_chars < got || got == 0) &&
@@ -626,18 +602,17 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
   tok->tag = saw_newline ? TSCFG_TOK_WS_NEWLINE : TSCFG_TOK_WS;
   if (include_str) {
-    str[len] = '\0';
-    tok->length = len;
-    tok->str = str;
+    tok->length = sb->len;
+    tok->str = sb->str;
   } else {
     tok->length = 0;
-    tok->str = 0;
+    tok->str = NULL;
   }
 
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -649,24 +624,21 @@ cleanup:
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
                                     tscfg_tok *tok) {
   tscfg_rc rc;
-  size_t str_size = 32;
-  char *str = malloc(str_size);
-  TSCFG_CHECK_MALLOC(str);
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, 32);
+  TSCFG_CHECK(rc);
 
-  size_t len = 1;
-  str[0] = c;
+  sb->len = 1;
+  sb->str[0] = c;
 
   bool saw_dec_point = false;
 
   while (true) {
-    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
-    if (str_size < min_size) {
-      str = realloc(str, min_size);
-      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-      str_size = min_size;
-    }
+    size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+    rc = strbuf_expand(sb, min_size, false);
+    TSCFG_CHECK(rc);
 
-    char *pos = &str[len];
+    char *pos = &sb->str[len];
     size_t got;
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
@@ -688,7 +660,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
 
     if (num_chars > 0) {
       lex_eat(lex, num_chars);
-      len += num_chars;
+      sb->len += num_chars;
     }
 
     if (num_chars < got || got == 0) {
@@ -699,13 +671,12 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
   }
 
   tok->tag = TSCFG_TOK_NUMBER;
-  str[len] = '\0';
-  tok->length = len;
-  tok->str = str;
+  tok->length = sb->len;
+  tok->str = sb->str;
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -735,23 +706,16 @@ static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
 
 static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
-  size_t len = 0;
-  size_t str_size = 32;
-  char *str = malloc(str_size);
-  TSCFG_CHECK_MALLOC(str);
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, 32);
+  TSCFG_CHECK(rc);
 
   bool end_of_string = false;
 
   do {
-    size_t min_size = len + 2;
-    if (str_size < min_size) {
-      size_t new_size = str_size * 2;
-      new_size = (new_size > min_size) ? new_size : min_size;
-      void *tmp = realloc(str, new_size);
-      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-      str = tmp;
-      str_size = new_size;
-    }
+    size_t min_size = sb->len + 2;
+    rc = strbuf_expand(&sb, min_size, false);
+    TSCFG_CHECK(rc);
 
     const size_t lookahead = 5; // Enough to handle all escape codes
     char buf[lookahead];
@@ -776,22 +740,21 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
       rc = extract_json_str_escape(lex, buf, got, &escaped, &escape_len);
       TSCFG_CHECK_GOTO(rc, cleanup);
 
-      len++;
+      sb->len++;
       lex_eat(lex, escape_len);
     } else {
       lex_eat(lex, 1);
-      str[len++] = buf[0];
+      sb->str[sb->len++] = buf[0];
     }
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
-  str[len] = '\0';
-  tok->length = len;
-  tok->str = str;
+  tok->length = sb->len;
+  tok->str = sb->str;
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -859,27 +822,21 @@ static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
 static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
                                             tscfg_tok *tok) {
   tscfg_rc rc;
-  size_t len = 0;
-  size_t str_size = 128;
-  char *str = malloc(str_size);
-  TSCFG_CHECK_MALLOC(str);
+  
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, 128);
+  TSCFG_CHECK(rc);
 
   bool end_of_string = false;
   do {
     assert(LEX_PEEK_BATCH_SIZE >= 4); // Look for triple quote plus one
 
     // Resize more aggressively since strings are often long
-    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
-    if (str_size < min_size) {
-      size_t new_size = str_size * 2;
-      new_size = (new_size > min_size) ? new_size : min_size;
-      void *tmp = realloc(str, new_size);
-      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-      str = tmp;
-      str_size = new_size;
-    }
+    size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+    rc = strbuf_expand(&sb, min_size, true);
+    TSCFG_CHECK(rc);
 
-    char *buf = &str[len];
+    char *buf = &sb->str[sb->len];
 
     size_t got = 0;
     rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
@@ -915,17 +872,16 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
 
     assert(to_append != 0);
     lex_eat(lex, to_append);
-    len += to_append;
+    sb->len += to_append;
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
-  str[len] = '\0';
-  tok->length = len;
-  tok->str = str;
+  tok->length = sb->len;
+  tok->str = sb->str;
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -935,23 +891,19 @@ cleanup:
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
 
-  size_t str_size = 32;
-  char *str = malloc(str_size);
-  TSCFG_CHECK_MALLOC(str);
-  size_t len = 0;
+  tscfg_strbuf sb;
+  rc = strbuf_init(&sb, 32);
+  TSCFG_CHECK(rc);
 
 
   bool end_of_tok = false;
   do {
-    size_t min_size = len + LEX_PEEK_BATCH_SIZE + 1;
-    if (str_size < min_size) {
-      str = realloc(str, min_size);
-      TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
-      str_size = min_size;
-    }
+    size_t min_size = sb->len + LEX_PEEK_BATCH_SIZE;
+    rc = strbuf_expand(&sb, min_size, false);
+    TSCFG_CHECK(rc);
 
     size_t got;
-    char *pos = &str[len];
+    char *pos = &sb->str[len];
 
     assert(LEX_PEEK_BATCH_SIZE >= 2); // Need lookahead of at least two chars
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
@@ -995,7 +947,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
 
     if (to_append > 0) {
       lex_eat(lex, to_append);
-      len += to_append;
+      sb->len += to_append;
     }
 
     if (got == 0) {
@@ -1005,14 +957,13 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   } while (!end_of_tok);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
-  str[len] = '\0';
-  tok->length = len;
-  tok->str = str;
+  tok->length = sb->len;
+  tok->str = sb->str;
 
   return TSCFG_OK;
 
 cleanup:
-  free(str);
+  strbuf_free(&sb);
   return rc;
 }
 
@@ -1145,4 +1096,39 @@ static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...) {
   va_start(args, fmt);
   tscfg_report_err_v(fmt, args);
   va_end(args);
+}
+
+static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size) {
+  if (init_size == 0) {
+    sb->str = NULL;
+  } else {
+    sb->str = malloc(init_size);
+    TSCFG_CHECK_MALLOC(sb->str);
+  }
+
+  sb->size = init_size;
+  sb->len = 0;
+  return TSCFG_OK;
+}
+
+/*
+ *
+ * aggressive: if true, aggressively allocate memory
+ */
+static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
+                              bool aggressive) {
+  if (sb->size < min_size) {
+    size_t new_size = sb->size * 2;
+    new_size = (new_size > min_size) ? new_size : min_size;
+    void *tmp = realloc(sb->str, new_size);
+    TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+    sb->str = tmp;
+    sb->size = new_size;
+  }
+
+  return TSCFG_OK;
+}
+
+static void strbuf_free(tscfg_strbuf *sb) {
+  free(sb->str);
 }

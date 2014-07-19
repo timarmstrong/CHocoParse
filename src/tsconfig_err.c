@@ -18,6 +18,7 @@
 void tscfg_report_err(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
+  // TODO: may need va_copy
   tscfg_report_err_v(fmt, args);
   va_end(args);
 }

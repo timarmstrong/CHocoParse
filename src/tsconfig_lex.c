@@ -822,7 +822,7 @@ static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
 static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
                                             tscfg_tok *tok) {
   tscfg_rc rc;
-  
+
   tscfg_strbuf sb;
   rc = strbuf_init(&sb, 128);
   TSCFG_CHECK(rc);

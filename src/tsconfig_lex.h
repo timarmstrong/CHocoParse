@@ -29,8 +29,8 @@ typedef struct {
 
   // Buffer for lookahead
   unsigned char *buf;
-  size_t buf_size;
-  size_t buf_len;
+  size_t buf_size; // Size in bytes
+  size_t buf_len; // Size in bytes
 } tscfg_lex_state;
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in);

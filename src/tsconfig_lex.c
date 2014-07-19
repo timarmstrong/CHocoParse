@@ -21,11 +21,15 @@
 static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok);
 static inline tscfg_tok_tag tag_from_char(char c);
 
-static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *got);
+static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
+                         int nchars, int *got);
+static tscfg_rc lex_peek_bytes(tscfg_lex_state *lex, char *buf,
+                               size_t len, size_t *got);
 static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes);
 static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
-static void lex_eat(tscfg_lex_state *lex, size_t bytes);
+static void lex_eat(tscfg_lex_state *lex, int chars);
+static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes);
 
 static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str);
@@ -36,7 +40,8 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str);
 
-static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c, tscfg_tok *tok);
+static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
+                                    tscfg_tok *tok);
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
@@ -44,8 +49,8 @@ static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
 static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
                                             tscfg_tok *tok);
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
-static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
-                                                  tscfg_tok *tok);
+static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
+                                        tscfg_char_t c, tscfg_tok *tok);
 
 static bool is_hocon_whitespace(tscfg_char_t c);
 static bool is_hocon_newline(tscfg_char_t c);
@@ -106,8 +111,8 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
   tscfg_rc rc;
 
   // Next character should be start of token.
-  char c;
-  size_t got;
+  tscfg_char_t c;
+  int got;
   rc = lex_peek(lex, &c, 1, &got);
   TSCFG_CHECK(rc);
 
@@ -118,7 +123,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
   assert(got == 1);
 
-  switch ((tscfg_char_t)c) {
+  switch (c) {
     CASE_HOCON_WHITESPACE:
       return extract_hocon_ws(lex, tok, opts.include_ws_str);
     case '"':
@@ -222,7 +227,42 @@ static inline tscfg_tok_tag tag_from_char(char c) {
   }
 }
 
-static tscfg_rc lex_peek(tscfg_lex_state *lex, char *buf, size_t len, size_t *got) {
+/*
+ * Read ahead nchars characters (or less if end of input)
+ */
+static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
+                         int nchars, int *got) {
+  tscfg_rc rc;
+  assert(nchars >= 0);
+  size_t max_bytes = (size_t)nchars * 4;
+
+  if (lex->buf_len < max_bytes) {
+    // Attempt to read more
+    size_t toread = max_bytes - lex->buf_len;
+    rc = lex_read_more(lex, toread);
+    TSCFG_CHECK(rc);
+  }
+
+  // Decode utf-8
+  int read_chars = 0;
+  size_t buf_pos = 0, buf_len = lex->buf_len;
+  while (read_chars < nchars && buf_pos < buf_len) {
+    unsigned char b = lex->buf[buf_pos++];
+    assert(b <= 127); // TODO: implement utf-8
+
+    buf[read_chars++] = (tscfg_char_t)b;
+  }
+
+  *got = read_chars;
+  return TSCFG_OK;
+}
+
+/*
+ * Peek, interpreting as ASCII, i.e. 1 byte per char.
+ *
+ */
+static tscfg_rc lex_peek_bytes(tscfg_lex_state *lex, char *buf,
+                               size_t len, size_t *got) {
   tscfg_rc rc;
 
   if (lex->buf_len < len) {
@@ -298,12 +338,28 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
   return TSCFG_OK;
 }
 
-static void lex_eat(tscfg_lex_state *lex, size_t bytes) {
+/*
+  Consume utf-8 chars from buffer.
+  We do this by redecoding the characters.
+  Rely on caller having peeked at least this many characters ahead
+ */
+static void lex_eat(tscfg_lex_state *lex, int chars) {
+  size_t byte_pos = 0;
+  while (int char_pos = 0; char_pos < chars; char_pos++) {
+    assert(byte_pos < lex->buf_len);
+    unsigned char b = lex->buf[byte_pos++];
+    assert(b <= 127); // TODO: Implement utf-8
+  }
+  
+  lex_eat_bytes(lex, byte_pos);
+}
+
+static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
   assert(bytes <= lex->buf_len);
 
   /* Bump data forward
-   * Note that this is inefficient if we are frequently bumping small portions of a large
-   * buffer, since this requires moving the remainder of the buffer.
+   * Note that this is inefficient if we are frequently bumping small portions
+   * of a large buffer, since this requires moving the remainder of the buffer.
    */
   size_t remaining = lex->buf_len - bytes;
   if (remaining > 0) {
@@ -312,12 +368,13 @@ static void lex_eat(tscfg_lex_state *lex, size_t bytes) {
   lex->buf_len = remaining;
 }
 
+
 static tscfg_rc extract_comment_or_hocon_unquoted(tscfg_lex_state *lex,
                                 tscfg_tok *tok, bool include_comm_str) {
   tscfg_rc rc;
 
-  char buf[2];
-  size_t got;
+  tscfg_char_t buf[2];
+  int got;
   rc = lex_peek(lex, buf, 2, &got);
   TSCFG_CHECK(rc);
 
@@ -371,13 +428,14 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     char *buf = include_str ? &str[len] : buf_storage;
 
     size_t got;
-    rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {
       break;
     }
 
+    // TODO: do we need to interpret as UTF-8?
     const char *nl = memchr(buf, '\n', got);
     size_t num_chars;
     if (nl == NULL) {
@@ -387,7 +445,7 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       end_of_line = true;
     }
 
-    lex_eat(lex, num_chars);
+    lex_eat_bytes(lex, num_chars);
     len += num_chars;
   }
 
@@ -447,20 +505,21 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     char *buf = include_str ? &str[len] : buf_storage;
 
     size_t got;
-    rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got < 2) {
       // Cannot be comment close, therefore unclosed comment
 
-      lex_eat(lex, got);
+      lex_eat_bytes(lex, got);
       len += got;
 
       lex_report_err(lex, "/* comment without matching */");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
-
+    
+    // TODO: do we need to interpret as utf-8?
     size_t num_chars = 0;
     while (num_chars < got - 1) {
       if (buf[num_chars] == '*' && buf[num_chars + 1] == '/') {
@@ -474,7 +533,7 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       }
     }
 
-    lex_eat(lex, num_chars);
+    lex_eat_bytes(lex, num_chars);
     len += num_chars;
   }
 
@@ -520,6 +579,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
   bool saw_newline = false;
 
   while (true) {
+    bool read_more = false;
 
     if (include_str) {
       // Resize more aggressively since strings are often long
@@ -534,13 +594,15 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
       }
     }
     char *buf = include_str ? &str[len] : buf_storage;
-
+    
     size_t got;
-    rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     assert(got <= LEX_PEEK_BATCH_SIZE);
 
+    // TODO: need to decode utf-8
+    // TODO: set read_more if in middle of char
     size_t ws_chars = 0;
     while (ws_chars < got &&
            is_hocon_whitespace(buf[ws_chars])) {
@@ -551,11 +613,12 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
     }
 
     if (ws_chars > 0) {
-      lex_eat(lex, ws_chars);
+      lex_eat_bytes(lex, ws_chars);
       len += ws_chars;
     }
 
-    if (ws_chars < got || got == 0) {
+    if ((ws_chars < got || got == 0) &&
+        !read_more) {
       // End of whitespace or file
       break;
     }
@@ -583,7 +646,7 @@ cleanup:
  * c: first character of string
  * TODO: doesn't handle exponentials
  */
-static tscfg_rc extract_json_number(tscfg_lex_state *lex, char c,
+static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
                                     tscfg_tok *tok) {
   tscfg_rc rc;
   size_t str_size = 32;
@@ -781,6 +844,9 @@ static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
     case 'u':
       // TODO: implement unicode escape codes
       return TSCFG_ERR_UNIMPL;
+    default:
+      // TODO
+      return TSCFG_ERR_UNIMPL;
   }
 
   return TSCFG_OK;
@@ -954,8 +1020,8 @@ cleanup:
  * Extract keyword or unquoted string.
  * c: first character of keyword
  */
-static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
-                                                  tscfg_tok *tok) {
+static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
+                                        tscfg_char_t c, tscfg_tok *tok) {
   tscfg_rc rc;
 
   const char *kw;
@@ -983,7 +1049,8 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
 
   char buf[kwlen];
   size_t got;
-  rc = lex_peek(lex, buf, kwlen, &got);
+  // All keywords are 1 byte per character in utf-8
+  rc = lex_peek_bytes(lex, buf, kwlen, &got);
   TSCFG_CHECK(rc);
 
   if (got == kwlen && memcmp(buf, kw, kwlen) == 0) {
@@ -991,7 +1058,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex, char c,
     tok->str = NULL;
     tok->length = 0;
 
-    lex_eat(lex, kwlen);
+    lex_eat_bytes(lex, kwlen);
 
     return TSCFG_OK;
   } else {

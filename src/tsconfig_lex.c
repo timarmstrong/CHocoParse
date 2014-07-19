@@ -1118,10 +1118,15 @@ static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size) {
 static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
                               bool aggressive) {
   if (sb->size < min_size) {
-    size_t new_size = sb->size * 2;
+    size_t new_size;
+    if (aggressive) {
+      new_size = sb->size * 2;
+    } else {
+      new_size = min_size;
+    }
     new_size = (new_size > min_size) ? new_size : min_size;
     void *tmp = realloc(sb->str, new_size);
-    TSCFG_CHECK_MALLOC_GOTO(str, cleanup, rc);
+    TSCFG_CHECK_MALLOC(sb->str);
     sb->str = tmp;
     sb->size = new_size;
   }

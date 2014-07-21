@@ -47,7 +47,7 @@ static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
                    bool *saw_comment, tscfg_tok **toks, int *tok_count,
                    tscfg_tok_tag *next_tag);
 
-static tscfg_rc key(ts_parse_state *state);
+static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count);
 static tscfg_rc value(ts_parse_state *state);
 
 static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
@@ -168,7 +168,7 @@ cleanup:
 }
 
 /*
- * Parse contents between { and }.
+ * Parse object body, returning when we hit } or EOF
  */
 static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
   tscfg_rc rc;
@@ -193,12 +193,13 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
 
     // TODO: check for include file and merge object
 
-    // TODO: parse key
-    tscfg_tok *key_toks = NULL;
-    int nkey_toks = 0;
+    tscfg_tok *key_toks;
+    int nkey_toks;
+    rc = key(state, &key_toks, &nkey_toks);
+    TSCFG_CHECK(rc);
 
     // Separator before value
-    tscfg_tok_tag sep = TSCFG_TOK_INVALID;
+    tscfg_tok_tag sep;
     rc = kv_sep(state, &sep);
     TSCFG_CHECK(rc);
 
@@ -221,11 +222,44 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
 }
 
 /*
- * Parse contents between [ and ].
+ * Parse array body, returning when we hit } or EOF
  */
 static tscfg_rc parse_hocon_arr_body(ts_parse_state *state) {
-  // TODO: parse array body
-  return TSCFG_ERR_UNIMPL;
+  tscfg_rc rc;
+  bool ok;
+
+  rc = skip_whitespace(state, NULL);
+  TSCFG_CHECK(rc);
+
+  ok = state->reader.arr_start(state->reader_state);
+  TSCFG_COND(ok, TSCFG_ERR_READER);
+
+  while (true) {
+    // Check for close square bracket or EOF.
+    // Whitespace should already be consumed.
+    tscfg_tok_tag tag;
+    rc = peek_tag(state, &tag);
+    TSCFG_CHECK(rc);
+    if (tag == TSCFG_TOK_CLOSE_SQUARE ||
+        tag == TSCFG_TOK_EOF) {
+      break;
+    }
+
+    ok = state->reader.val_start(state->reader_state);
+    TSCFG_COND(ok, TSCFG_ERR_READER);
+
+    // Parse value
+    rc = value(state);
+    TSCFG_CHECK(rc);
+
+    ok = state->reader.val_end(state->reader_state);
+    TSCFG_COND(ok, TSCFG_ERR_READER);
+
+  }
+
+  ok = state->reader.arr_end(state->reader_state);
+  TSCFG_COND(ok, TSCFG_ERR_READER);
+  return TSCFG_OK;
 }
 
 /*
@@ -288,11 +322,12 @@ static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
   return TSCFG_ERR_UNIMPL;
 }
 
-static tscfg_rc key(ts_parse_state *state) {
-  // TODO
+static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
+  // TODO: parse as value concatentation
+  *toks = NULL;
+  *tok_count = 0;
   return TSCFG_ERR_UNIMPL;
 }
-
 
 /*
   Parse a value: nested object, array or concatenated tokens.
@@ -513,7 +548,7 @@ static void pop_toks(ts_parse_state *state, int count) {
   // Cleanup memory first
   free_toks(state->toks, count);
 
-  memmove(&state->toks[0], &state->toks[count], state->ntoks - count);
+  memmove(&state->toks[0], &state->toks[count], (size_t)(state->ntoks - count));
   state->ntoks -= count;
 }
 

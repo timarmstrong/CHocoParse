@@ -657,30 +657,30 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
 
     char *pos = &sb.str[sb.len];
     size_t got;
-    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_bytes(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     assert(got <= LEX_PEEK_BATCH_SIZE);
 
-    size_t num_chars = 0;
-    while (num_chars < got) {
-      c = pos[num_chars];
+    size_t nchars = 0;
+    while (nchars < got) {
+      c = pos[nchars];
       if ((c >= '0' && c <= '9')) {
-        num_chars++;
+        nchars++;
       } else if (!saw_dec_point && c == '.') {
         saw_dec_point = true;
-        num_chars++;
+        nchars++;
       } else {
         break;
       }
     }
 
-    if (num_chars > 0) {
-      lex_eat(lex, num_chars);
-      sb.len += num_chars;
+    if (nchars > 0) {
+      lex_eat(lex, nchars);
+      sb.len += nchars;
     }
 
-    if (num_chars < got || got == 0) {
+    if (nchars < got || got == 0) {
       // End of whitespace or file
       break;
     }
@@ -704,15 +704,15 @@ cleanup:
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
   // Remove initial "
-  lex_eat(lex, 1);
+  lex_eat_bytes(lex, 1);
 
   char buf[2];
   size_t got = 0;
-  rc = lex_peek(lex, buf, 2, &got);
+  rc = lex_peek_bytes(lex, buf, 2, &got);
   TSCFG_CHECK(rc);
 
   if (got == 2 && memcmp(buf, "\"\"", 2) == 0) {
-    lex_eat(lex, 2);
+    lex_eat_bytes(lex, 2);
     // Multiline string
     return extract_hocon_multiline_str(lex, tok);
   } else {
@@ -738,7 +738,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
     char buf[lookahead];
 
     size_t got;
-    rc = lex_peek(lex, buf, lookahead, &got);
+    rc = lex_peek_bytes(lex, buf, lookahead, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {
@@ -749,7 +749,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
 
     char c = buf[0];
     if (c == '"') {
-      lex_eat(lex, 1);
+      lex_eat_bytes(lex, 1);
       end_of_string = true;
     } else if (c == '\\') {
       char escaped;
@@ -758,9 +758,9 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
       TSCFG_CHECK_GOTO(rc, cleanup);
 
       sb.len++;
-      lex_eat(lex, escape_len);
+      lex_eat_bytes(lex, escape_len);
     } else {
-      lex_eat(lex, 1);
+      lex_eat_bytes(lex, 1);
       sb.str[sb.len++] = buf[0];
     }
   } while (!end_of_string);
@@ -856,7 +856,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
     char *buf = &sb.str[sb.len];
 
     size_t got = 0;
-    rc = lex_peek(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     size_t to_append = 0;
@@ -888,7 +888,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
     }
 
     assert(to_append != 0);
-    lex_eat(lex, to_append);
+    lex_eat_bytes(lex, to_append);
     sb.len += to_append;
   } while (!end_of_string);
 
@@ -920,8 +920,9 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
     TSCFG_CHECK(rc);
 
     size_t got;
-    char *pos = &sb.str[len];
+    char *pos = &sb.str[sb.len];
 
+    // TODO: modify to unicode decoding
     assert(LEX_PEEK_BATCH_SIZE >= 2); // Need lookahead of at least two chars
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);

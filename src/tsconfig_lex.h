@@ -28,6 +28,8 @@ typedef struct {
   tsconfig_input in;
 
   // Buffer for lookahead
+  // TODO: might be better to include "head" pointer to avoid moving bytes
+  // as much and enabling more readahead
   unsigned char *buf;
   size_t buf_size; // Size in bytes
   size_t buf_len; // Size in bytes

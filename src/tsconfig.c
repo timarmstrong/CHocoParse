@@ -19,6 +19,7 @@
 
 #include "tsconfig_err.h"
 #include "tsconfig_lex.h"
+#include "tsconfig_tree_reader.h"
 
 typedef struct {
   tscfg_reader reader;
@@ -35,8 +36,6 @@ static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
   tscfg_reader reader, void *reader_state);
 static void ts_parse_state_finalize(ts_parse_state *state);
 static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
-
-static tscfg_rc tree_reader_init(tscfg_reader *reader, void **reader_state);
 
 static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
                             void *reader_state);
@@ -71,19 +70,23 @@ static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline);
 tscfg_rc tsconfig_parse_tree(tsconfig_input in, tscfg_fmt fmt,
                               tsconfig_tree *cfg) {
   tscfg_reader reader;
-  void *reader_state;
-  tscfg_rc rc = tree_reader_init(&reader, &reader_state);
+  tscfg_treeread_state *reader_state;
+  tscfg_rc rc = tscfg_tree_reader_init(&reader, &reader_state);
   TSCFG_CHECK(rc);
 
-  // TODO: additional processing to merge values, etc.
+  rc = tsconfig_parse(in, fmt, reader, (void*)reader_state);
+  TSCFG_CHECK(rc);
 
-  return tsconfig_parse(in, fmt, reader, reader_state);
+  tsconfig_tree tree;
+  rc = tscfg_tree_reader_done(reader_state, &tree);
+  TSCFG_CHECK(rc);
+
+  // TODO: additional processing to merge values, etc
+
+  *cfg = tree;
+  return TSCFG_OK;
 }
 
-static tscfg_rc tree_reader_init(tscfg_reader *reader, void **reader_state) {
-  // TODO: implement
-  return TSCFG_ERR_UNIMPL;
-}
 
 tscfg_rc tsconfig_parse(tsconfig_input in, tscfg_fmt fmt,
       tscfg_reader reader, void *reader_state) {

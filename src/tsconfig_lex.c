@@ -28,7 +28,8 @@ typedef struct {
   size_t len; // Data length in bytes
 } tscfg_strbuf;
 
-static inline void set_str_tok(tscfg_tok_tag tag, tscfg_str_buf *sb,
+static inline void tok_file_line(const tscfg_lex_state *lex, tscfg_tok *tok);
+static inline void set_str_tok(tscfg_tok_tag tag, tscfg_strbuf *sb,
                                tscfg_tok *tok);
 static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok);
 static inline tscfg_tok_tag tag_from_char(char c);
@@ -42,6 +43,9 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static void lex_eat(tscfg_lex_state *lex, int chars);
 static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes);
+
+static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
+                            bool aggressive_resize);
 
 static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str);
@@ -67,7 +71,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
 static bool is_hocon_whitespace(tscfg_char_t c);
 static bool is_hocon_newline(tscfg_char_t c);
 static bool is_hocon_unquoted_char(tscfg_char_t c);
-static bool is_comment_start(const char *buf, size_t len);
+static bool is_comment_start(const tscfg_char_t *buf, size_t len);
 
 static void strbuf_init_empty(tscfg_strbuf *sb);
 static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size);
@@ -214,9 +218,10 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 /*
  * Token starts at current file/line
  */
-static inline void tok_file_line(const tscfg_lex *lex, tscfg_tok *tok) {
-  tok->line = lex->line;
-  tok->line_char = lex->line_char;
+static inline void tok_file_line(const tscfg_lex_state *lex, tscfg_tok *tok) {
+  // TODO: need to track info in lexer
+  tok->line = 0;
+  tok->line_char = 0;
 }
 
 /*
@@ -233,15 +238,15 @@ static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok) {
  * sb: assume enough room allocated for null terminator.
  *     sb is invalidated by call.
  */
-static inline void set_str_tok(tscfg_tok_tag tag, tscfg_str_buf *sb, tscfg_tok *tok) {
+static inline void set_str_tok(tscfg_tok_tag tag, tscfg_strbuf *sb, tscfg_tok *tok) {
   tok->tag = tag;
 
-  strbuf_finalize(&sb);
+  strbuf_finalize(sb);
   tok->str = sb->str;
   tok->len = sb->len;
 
   // Invalidate string buffer
-  strbuf_init_empty(&sb);
+  strbuf_init_empty(sb);
 }
 
 /*
@@ -428,6 +433,27 @@ static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
     memmove(&lex->buf[0], &lex->buf[bytes], remaining);
   }
   lex->buf_len = remaining;
+}
+
+static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
+                            bool aggressive_resize) {
+  tscfg_rc rc;
+
+  int enc_len;
+  tscfg_char_t c;
+  rc = tscfg_decode_byte1(lex->buf[0], &enc_len, &c);
+
+  // Check caller called when in valid state
+  assert(rc == TSCFG_OK);
+  assert((size_t)enc_len <= lex->buf_len);
+
+  rc = strbuf_expand(sb, sb->len + (size_t)enc_len, aggressive_resize);
+  memcpy(&sb->str[sb->len], lex->buf, (size_t)enc_len);
+  sb->len += enc_len;
+
+  lex_eat_bytes(lex, enc_len);
+
+  return TSCFG_OK;
 }
 
 
@@ -940,16 +966,12 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   rc = strbuf_init(&sb, 32);
   TSCFG_CHECK(rc);
 
-
-  bool end_of_tok = false;
   while (true) {
     // Need to interpret as unicode
     tscfg_char_t buf[2];
     int got;
     rc = lex_peek(lex, buf, 2, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
-
-    size_t to_append = 0;
 
     if (got == 0) {
       break;
@@ -962,12 +984,12 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
     }
 
     // Can check for comment with lookahead two
-    if (is_comment_start(&pos[to_append], got)) {
+    if (is_comment_start(buf, got)) {
       break;
     }
 
-    // TODO: determine length in bytes to append
-    rc = lex_append(lex, 1, &sb, true);
+    // Append first character and advance
+    rc = lex_append_char(lex, &sb, true);
     TSCFG_CHECK(rc);
 
   }
@@ -1090,7 +1112,7 @@ static bool is_hocon_unquoted_char(tscfg_char_t c) {
 /*
  * Return true if string is start of comment
  */
-static bool is_comment_start(const char *buf, size_t len) {
+static bool is_comment_start(const tscfg_char_t *buf, size_t len) {
   if (len >= 1 && buf[0] == '#') {
     return true;
   } else if (len >= 2 && buf[0] == '/' &&

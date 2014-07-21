@@ -21,6 +21,9 @@
  * TODO: document error handling
  */
 
+#ifndef __TSCONFIG_READER_H
+#define __TSCONFIG_READER_H
+
 #include <stdbool.h>
 
 #include "tsconfig_tok.h"
@@ -71,3 +74,5 @@ typedef struct {
   bool (*token)(void *s, tscfg_tok *tok);
 
 } tscfg_reader;
+
+#endif // __TSCONFIG_READER_H

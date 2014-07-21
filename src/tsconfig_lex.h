@@ -28,14 +28,13 @@ typedef struct {
   tsconfig_input in;
 
   // Buffer for lookahead
-  // TODO: might be better to include "head" pointer to avoid moving bytes
-  // as much and enabling more readahead
   unsigned char *buf;
-  size_t buf_size; // Size in bytes
-  size_t buf_len; // Size in bytes
+  size_t buf_size; // Allocated size in bytes
+  size_t buf_pos; // Position in buffer
+  size_t buf_len; // Length of valid bytes beyond buf_pos
 
   int line;
-  int line_pos;
+  int line_char;
 } tscfg_lex_state;
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in);

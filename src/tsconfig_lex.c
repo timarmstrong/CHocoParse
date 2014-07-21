@@ -43,7 +43,6 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static void lex_eat(tscfg_lex_state *lex, int chars);
 static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes);
-static void bump_data(tscfg_lex_state *lex, size_t bytes);
 
 static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize);
@@ -115,7 +114,7 @@ tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in) {
   lex->buf_len = 0;
 
   lex->line = 1;
-  lex->line_pos = 1;
+  lex->line_char = 1;
   return TSCFG_OK;
 }
 
@@ -222,9 +221,8 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
  * Token starts at current file/line
  */
 static inline void tok_file_line(const tscfg_lex_state *lex, tscfg_tok *tok) {
-  // TODO: need to track info in lexer
-  tok->line = 0;
-  tok->line_char = 0;
+  tok->line = lex->line;
+  tok->line_char = lex->line_char;
 }
 
 /*
@@ -299,8 +297,10 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
 
   // Decode utf-8
   int read_chars = 0;
-  size_t buf_pos = 0, buf_len = lex->buf_len;
-  while (read_chars < nchars && buf_pos < buf_len) {
+  size_t buf_pos = lex->buf_pos;
+  size_t buf_end = lex->buf_pos + lex->buf_len;
+
+  while (read_chars < nchars && buf_pos < buf_end) {
     unsigned char b = lex->buf[buf_pos++];
     int enc_len;
     tscfg_char_t c;
@@ -336,7 +336,7 @@ static tscfg_rc lex_peek_ascii(tscfg_lex_state *lex, char *buf,
   }
 
   *got = lex->buf_len < len ? lex->buf_len : len;
-  memcpy(buf, lex->buf, *got);
+  memcpy(buf, &lex->buf[lex->buf_pos], *got);
   return TSCFG_OK;
 }
 
@@ -356,8 +356,16 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes) {
     lex->buf_size = size_needed;
   }
 
+  // TODO: read extra?
+
+  // Move data back when needed to free space at end
+  if (lex->buf_pos + size_needed > lex->buf_size) {
+    memmove(lex->buf, &lex->buf[lex->buf_pos], lex->buf_len);
+    lex->buf_pos = 0;
+  }
+
   size_t read_bytes = 0;
-  rc = lex_read(lex, &lex->buf[lex->buf_len], bytes, &read_bytes);
+  rc = lex_read(lex, &lex->buf[lex->buf_pos + lex->buf_len], bytes, &read_bytes);
   TSCFG_CHECK(rc);
 
   lex->buf_len += read_bytes;
@@ -408,27 +416,25 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
  */
 static void lex_eat(tscfg_lex_state *lex, int chars) {
   tscfg_rc rc;
-  size_t byte_pos = 0;
   for (int char_pos = 0; char_pos < chars; char_pos++) {
     tscfg_char_t c;
     int enc_len;
-    unsigned char b = lex->buf[byte_pos];
+    unsigned char b = lex->buf[lex->buf_pos];
 
     rc = tscfg_decode_byte1(b, &enc_len, &c);
     assert(rc == TSCFG_OK); // Check caller was correct
 
-    byte_pos += enc_len;
-    assert(byte_pos < lex->buf_len);
+    assert(lex->buf_len >= (size_t)enc_len);
+    lex->buf_pos += enc_len;
+    lex->buf_len -= enc_len;
 
     if (is_hocon_newline(b)) {
       lex->line++;
-      lex->line_pos = 1;
+      lex->line_char = 1;
     } else {
-      lex->line_pos++;
+      lex->line_char++;
     }
   }
-
-  bump_data(lex, byte_pos);
 }
 
 /*
@@ -444,16 +450,19 @@ static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
   tscfg_rc rc;
 
   size_t byte_pos = 0;
-  int char_pos = 0;
 
   /*
     Scan forward, parsing UTF-8 so that we get accurate char position info.
-    Note that byte_pos may overshoot bytes.  In this case the next
+    Note that byte_pos may overshoot bytes.  In this case the caller must
+    be ready to handle this case.
    */
   while (byte_pos < bytes) {
+    // Start of UTF-8 char should be in buffer
+    assert(byte_pos < lex->buf_len);
+
     tscfg_char_t c;
     int enc_len;
-    unsigned char b = lex->buf[byte_pos];
+    unsigned char b = lex->buf[lex->buf_pos + byte_pos];
 
     rc = tscfg_decode_byte1(b, &enc_len, &c);
     if (rc == TSCFG_ERR_INVALID) {
@@ -465,32 +474,19 @@ static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
     }
 
     byte_pos += enc_len;
-    assert(byte_pos < lex->buf_len);
-    char_pos++;
 
     if (is_hocon_newline(b)) {
       lex->line++;
-      lex->line_pos = 1;
+      lex->line_char = 1;
     } else {
-      lex->line_pos++;
+      lex->line_char++;
     }
   }
 
-  // Bump requested number of bytes (NOT to next character)
-  bump_data(lex, bytes);
+  // Bump requested number of bytes (*not* to next character necessarily)
+  lex->buf_pos += bytes;
 }
 
-static void bump_data(tscfg_lex_state *lex, size_t bytes) {
-  /* Bump data forward
-   * Note that this is inefficient if we are frequently bumping small portions
-   * of a large buffer, since this requires moving the remainder of the buffer.
-   */
-  size_t remaining = lex->buf_len - bytes;
-  if (remaining > 0) {
-    memmove(&lex->buf[0], &lex->buf[bytes], remaining);
-  }
-  lex->buf_len = remaining;
-}
 
 static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize) {

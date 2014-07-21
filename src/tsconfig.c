@@ -180,8 +180,7 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
   ok = state->reader.obj_start(state->reader_state);
   TSCFG_COND(ok, TSCFG_ERR_READER);
 
-  bool no_more_items = false;
-  do {
+  while (true) {
     // Check for close brace or EOF.
     // Whitespace should already be consumed.
     tscfg_tok_tag tag;
@@ -189,92 +188,43 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
     TSCFG_CHECK(rc);
     if (tag == TSCFG_TOK_CLOSE_BRACE ||
         tag == TSCFG_TOK_EOF) {
-      ok = state->reader.obj_end(state->reader_state);
-      TSCFG_COND(ok, TSCFG_ERR_READER);
-      return TSCFG_OK;
+      break;
     }
 
     // TODO: check for include file and merge object
 
-    // Separator before value
-    rc = kv_sep(state, NULL);
-    TSCFG_CHECK(rc);
-
-    // TODO
-    tscfg_tok_tag sep = TSCFG_TOK_INVALID;
+    // TODO: parse key
     tscfg_tok *key_toks = NULL;
     int nkey_toks = 0;
+
+    // Separator before value
+    tscfg_tok_tag sep = TSCFG_TOK_INVALID;
+    rc = kv_sep(state, &sep);
+    TSCFG_CHECK(rc);
 
     ok = state->reader.key_val_start(state->reader_state,
                                     key_toks, nkey_toks, sep);
     TSCFG_COND(ok, TSCFG_ERR_READER);
 
-    // TODO
-    // value: nested object, or token or expression, or multiple tokens
+    // Parse value
     rc = value(state);
     TSCFG_CHECK(rc);
-
-    // Loop until found sep
-    while (true) {
-      // TODO: pass in tokens
-
-      // Separator: comma or newline
-      bool sep = false, comment = false;
-      tscfg_tok *toks;
-      int tok_count;
-      rc = concat_or_item_sep(state, &sep, &comment, &toks, &tok_count,
-                              &tag);
-      TSCFG_CHECK(rc);
-
-      if (sep) {
-        // Ready for next item
-        free_toks(toks, tok_count);
-        break;
-      } else if (tag == TSCFG_TOK_CLOSE_BRACE ||
-                 tag == TSCFG_TOK_EOF) {
-        free_toks(toks, tok_count);
-        no_more_items = true;
-        break;
-      } else {
-        // Interpret as concatenation with next token
-        if (comment) {
-          // TODO: I think comments are invalid here
-          free_toks(toks, tok_count);
-          tscfg_report_err("Comments not allowed between tokens here");
-          return TSCFG_ERR_SYNTAX;
-        }
-
-        // TODO: implement concat
-        return TSCFG_ERR_UNIMPL;
-      }
-    }
 
     ok = state->reader.key_val_end(state->reader_state);
     TSCFG_COND(ok, TSCFG_ERR_READER);
 
-  } while (!no_more_items);
-
-  tscfg_tok_tag tag;
-  rc = peek_tag(state, &tag);
-  TSCFG_CHECK(rc);
-
-  if (tag == TSCFG_TOK_CLOSE_BRACE ||
-      tag == TSCFG_TOK_EOF) {
-    ok = state->reader.obj_end(state->reader_state);
-    TSCFG_COND(ok, TSCFG_ERR_READER);
-
-    return TSCFG_OK;
-  } else {
-    tscfg_report_err("Expected end of object but got something else.");
-    return TSCFG_ERR_SYNTAX;
   }
+
+  ok = state->reader.obj_end(state->reader_state);
+  TSCFG_COND(ok, TSCFG_ERR_READER);
+  return TSCFG_OK;
 }
 
 /*
  * Parse contents between [ and ].
  */
 static tscfg_rc parse_hocon_arr_body(ts_parse_state *state) {
-  // TODO
+  // TODO: parse array body
   return TSCFG_ERR_UNIMPL;
 }
 
@@ -329,7 +279,7 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
  * saw_sep: if saw item separator (newline or comma)
  * saw_comment: if there was a comment token
  * toks/tok_count: array of tokens consumed
- * tag: tag of text token
+ * next_tag: tag of next token
  */
 static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
                    bool *saw_comment, tscfg_tok **toks, int *tok_count,
@@ -343,8 +293,47 @@ static tscfg_rc key(ts_parse_state *state) {
   return TSCFG_ERR_UNIMPL;
 }
 
+
+/*
+  Parse a value: nested object, array or concatenated tokens.
+ */
 static tscfg_rc value(ts_parse_state *state) {
-  // TODO
+    tscfg_rc rc;
+    // TODO: nested objects/arrays?
+    // Loop until end of value
+    while (true) {
+
+      // TODO: this logic needs revisiting
+      // Separator: comma or newline
+      bool sep = false, comment = false;
+      tscfg_tok *toks;
+      tscfg_tok_tag next_tag;
+      int tok_count;
+      rc = concat_or_item_sep(state, &sep, &comment, &toks, &tok_count,
+                              &next_tag);
+      TSCFG_CHECK(rc);
+
+      if (sep) {
+        // Ready for next item
+        free_toks(toks, tok_count);
+        break;
+      } else if (next_tag == TSCFG_TOK_CLOSE_BRACE ||
+                 next_tag == TSCFG_TOK_EOF) {
+        free_toks(toks, tok_count);
+        break;
+      } else {
+        // Interpret as concatenation with next token
+        if (comment) {
+          // TODO: I think comments are invalid here
+          free_toks(toks, tok_count);
+          tscfg_report_err("Comments not allowed between tokens here");
+          return TSCFG_ERR_SYNTAX;
+        }
+
+        // TODO: implement concat
+        return TSCFG_ERR_UNIMPL;
+      }
+    }
   return TSCFG_ERR_UNIMPL;
 }
 

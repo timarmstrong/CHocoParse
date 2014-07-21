@@ -32,7 +32,6 @@ typedef enum {
 } tsconfig_input_kind;
 
 typedef struct {
-  // TODO: tagged enum
   tsconfig_input_kind kind;
   union {
     FILE* f;

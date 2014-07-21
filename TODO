@@ -1,8 +1,8 @@
 List of miscellaneous unimplemented features.
 
-* Support for UTF-8 encoding.
-* Error handling API
-
+* Include statements.
+* Canonicalization of UTF-8 input, e.g. for strings or variable names
+* Error handling API, e.g. storing error state
 
 * Post-processing stage where variables, concatenations and overwrites
 * are resolved.

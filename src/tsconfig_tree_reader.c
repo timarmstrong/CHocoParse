@@ -9,6 +9,9 @@
 
 #include "tsconfig_tree_reader.h"
 
+#include <stdbool.h>
+#include <stdlib.h>
+
 #include "tsconfig_err.h"
 
 struct tscfg_treeread_state {

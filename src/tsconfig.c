@@ -102,41 +102,56 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
   rc = ts_parse_state_init(&state, in, reader, reader_state);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
-  // TODO: open square bracket also supported
-  bool open_brace;
-  rc = next_tok_matches(&state, TSCFG_TOK_OPEN_BRACE, true, &open_brace);
+  tscfg_tok_tag open_tag; // E.g. open brace
+
+  rc = peek_tag_skip_ws(&state, &open_tag);
   TSCFG_CHECK_GOTO(rc, cleanup);
 
-  if (open_brace) {
+  if (open_tag == TSCFG_TOK_OPEN_BRACE ||
+      open_tag == TSCFG_TOK_OPEN_SQUARE) {
     pop_toks(&state, 1);
+  } else {
+    // No initial punctuation
+    open_tag = TSCFG_TOK_INVALID;
   }
 
-  // body of JSON
-  rc = parse_hocon_body(&state);
-  TSCFG_CHECK_GOTO(rc, cleanup);
+  if (open_tag == TSCFG_OPEN_SQUARE) {
+    // Array
+    rc = parse_hocon_array(&state);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+  } else {
+    // Explicit or implicit object
+    rc = parse_hocon_body(&state);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+  }
 
-  if (open_brace) {
-    bool close_brace;
-    rc = next_tok_matches(&state, TSCFG_TOK_CLOSE_BRACE, true, &close_brace);
+  if (open_tag != TSCFG_TOK_INVALID) {
+    tscfg_tok_tag open_tag;
+
+    // Whitespace should be all consumed
+    rc = peek_tag(&state, &close_tag);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
-    if (!close_brace) {
-      ts_parse_report_err(&state, "Expected close brace to match initial "
-                                    "open");
+    if ((open_tag == TSCFG_TOK_OPEN_BRACE &&
+          close_tag == TSCFG_TOK_CLOSE_BRACE) ||
+        (open_tag == TSCFG_TOK_OPEN_SQUARE &&
+          close_tag == TSCFG_TOK_CLOSE_SQUARE)) {
+      pop_toks(&state, 1);
+    } else {
+      const char *msg = (open_tag == TSCFG_TOK_OPEN_BRACE) ?
+              "Expected closing brace to match initial open" :
+              "Expected closing square bracket to match initial open";
+      ts_parse_report_err(&state, msg);
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
-
-    pop_toks(&state, 1);
   }
 
   tscfg_tok tok;
   int got;
   rc = peek_tok_skip_ws(&state, &tok, 1, &got);
   assert(got == 1); // Should get at least end of file
-  if (tok.tag == TSCFG_TOK_EOF) {
-    pop_toks(&state, 1);
-  } else {
+  if (tok.tag != TSCFG_TOK_EOF) {
     // TODO: include token tag
     ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
                              (int)tok.length, tok.str);
@@ -145,10 +160,6 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
   rc = TSCFG_OK;
 cleanup:
   ts_parse_state_finalize(&state);
-
-  if (rc != TSCFG_OK) {
-    // TODO: cleanup partially built config on error
-  }
   return rc;
 }
 

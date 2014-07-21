@@ -272,7 +272,7 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
     // TODO: check enough bytes in buffer
     rc = tscfg_decode_rest(&lex->buf[buf_pos], enc_len - 1, &c);
     TSCFG_CHECK(rc);
-    
+
     buf_pos += (enc_len - 1);
     chars[read_chars++] = c;
   }
@@ -374,9 +374,9 @@ static void lex_eat(tscfg_lex_state *lex, int chars) {
     tscfg_char_t c;
     int enc_len;
     unsigned char b = lex->buf[byte_pos];
-    
+
     rc = tscfg_decode_byte1(b, &enc_len, &c);
-    assert(rc == TSCFG_OK); // Check caller was correct 
+    assert(rc == TSCFG_OK); // Check caller was correct
 
     byte_pos += enc_len;
     assert(byte_pos < lex->buf_len);
@@ -454,7 +454,6 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       break;
     }
 
-    // TODO: do we need to interpret as UTF-8?
     const char *nl = memchr(buf, '\n', got);
     size_t num_chars;
     if (nl == NULL) {
@@ -525,7 +524,6 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
       goto cleanup;
     }
 
-    // TODO: do we need to interpret as utf-8?
     size_t num_chars = 0;
     while (num_chars < got - 1) {
       if (buf[num_chars] == '*' && buf[num_chars + 1] == '/') {
@@ -914,65 +912,35 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
 
 
   bool end_of_tok = false;
-  do {
-    size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
-    rc = strbuf_expand(&sb, min_size, false);
-    TSCFG_CHECK(rc);
-
-    size_t got;
-    char *pos = &sb.str[sb.len];
-
-    // TODO: modify to unicode decoding
-    assert(LEX_PEEK_BATCH_SIZE >= 2); // Need lookahead of at least two chars
-    rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+  while (true) {
+    // Need to interpret as unicode
+    tscfg_char_t buf[2];
+    int got;
+    rc = lex_peek(lex, buf, 2, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     size_t to_append = 0;
 
-    // Cannot append last character b/c need to check not a comment
-    while (to_append < got) {
-      if (!is_hocon_unquoted_char(pos[to_append]) &&
-          is_hocon_whitespace(pos[to_append])) {
-        // Cases where unquoted text definitely terminates
-        end_of_tok = true;
-        break;
-      }
-
-      if (to_append < got - 1) {
-        // Can check for comment with lookahead two
-        if (is_comment_start(&pos[to_append], 2)) {
-          end_of_tok = true;
-          break;
-        }
-      } else {
-        /* Last character, may not be able to decide whether to append yet */
-        if (got < LEX_PEEK_BATCH_SIZE) {
-          // End of file, only check one char comments
-          if (is_comment_start(&pos[to_append], 1)) {
-            end_of_tok = true;
-            break;
-          }
-        } else {
-          // Need to read more before deciding
-          end_of_tok = false;
-          break;
-        }
-      }
-
-      // Next character is part of unquoted text
-      to_append++;
-    }
-
-    if (to_append > 0) {
-      lex_eat(lex, to_append);
-      sb.len += to_append;
-    }
-
     if (got == 0) {
-      // End of input
-      end_of_tok = true;
+      break;
     }
-  } while (!end_of_tok);
+
+    if (!is_hocon_unquoted_char(buf[0]) &&
+        is_hocon_whitespace(buf[0])) {
+      // Cases where unquoted text definitely terminates
+      break;
+    }
+
+    // Can check for comment with lookahead two
+    if (is_comment_start(&pos[to_append], got)) {
+      break;
+    }
+
+    // TODO: determine length in bytes to append
+    rc = lex_append(lex, 1, &sb, true);
+    TSCFG_CHECK(rc);
+
+  }
 
   tok->tag = TSCFG_TOK_UNQUOTED;
   tok->length = sb.len;

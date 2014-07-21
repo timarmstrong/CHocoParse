@@ -155,7 +155,7 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
   if (tok.tag != TSCFG_TOK_EOF) {
     // TODO: include token tag
     ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
-                             (int)tok.length, tok.str);
+                             (int)tok.len, tok.str);
   }
 
   rc = TSCFG_OK;
@@ -197,8 +197,13 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
     rc = kv_sep(state, NULL);
     TSCFG_CHECK(rc);
 
+    // TODO
+    tscfg_tok_tag sep = TSCFG_TOK_INVALID;
+    tscfg_tok *key_toks = NULL;
+    int nkey_toks = 0;
+
     ok = state->reader.key_val_start(state->reader_state,
-            key_toks, nkey_toks, sep);
+                                    key_toks, nkey_toks, sep);
     TSCFG_COND(ok, TSCFG_ERR_READER);
 
     // TODO

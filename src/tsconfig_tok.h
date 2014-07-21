@@ -58,7 +58,11 @@ typedef struct {
   /* String, if any.  Null terminated, but may have nulls in string if
      they were in input. */
   char *str;
-  size_t length;
+  size_t len;
+
+  /* Location in file (both start at 1) */
+  int line;
+  int line_char; // UTF-8 character index in line
 } tscfg_tok;
 
 #endif // __TSCONFIG_TOK_H

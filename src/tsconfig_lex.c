@@ -28,6 +28,8 @@ typedef struct {
   size_t len; // Data length in bytes
 } tscfg_strbuf;
 
+static inline void set_str_tok(tscfg_tok_tag tag, tscfg_str_buf *sb,
+                               tscfg_tok *tok);
 static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok);
 static inline tscfg_tok_tag tag_from_char(char c);
 
@@ -127,6 +129,9 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
   tscfg_rc rc;
 
+  // Token starts at current position
+  tok_file_line(lex, tok);
+
   // Next character should be start of token.
   tscfg_char_t c;
   int got;
@@ -207,12 +212,36 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 }
 
 /*
+ * Token starts at current file/line
+ */
+static inline void tok_file_line(const tscfg_lex *lex, tscfg_tok *tok) {
+  tok->line = lex->line;
+  tok->line_char = lex->line_char;
+}
+
+/*
  * Set token without string
  */
 static inline void set_nostr_tok(tscfg_tok_tag tag, tscfg_tok *tok) {
   tok->tag = tag;
   tok->str = NULL;
-  tok->length = 0;
+  tok->len = 0;
+}
+
+/*
+ * Set token with string from string buffer.
+ * sb: assume enough room allocated for null terminator.
+ *     sb is invalidated by call.
+ */
+static inline void set_str_tok(tscfg_tok_tag tag, tscfg_str_buf *sb, tscfg_tok *tok) {
+  tok->tag = tag;
+
+  strbuf_finalize(&sb);
+  tok->str = sb->str;
+  tok->len = sb->len;
+
+  // Invalidate string buffer
+  strbuf_init_empty(&sb);
 }
 
 /*
@@ -473,14 +502,10 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     sb.len += num_chars;
   }
 
-  tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
-    strbuf_finalize(&sb);
-    tok->length = sb.len;
-    tok->str = sb.str;
+    set_str_tok(TSCFG_TOK_COMMENT, &sb, tok);
   } else {
-    tok->length = 0;
-    tok->str = 0;
+    set_nostr_tok(TSCFG_TOK_COMMENT, tok);
   }
 
 
@@ -553,14 +578,10 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     sb.len += num_chars;
   }
 
-  tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
-    strbuf_finalize(&sb);
-    tok->length = sb.len;
-    tok->str = sb.str;
+    set_str_tok(TSCFG_TOK_COMMENT, &sb, tok);
   } else {
-    tok->length = 0;
-    tok->str = NULL;
+    set_nostr_tok(TSCFG_TOK_COMMENT, tok);
   }
 
   return TSCFG_OK;
@@ -632,14 +653,11 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
     }
   }
 
-  tok->tag = saw_newline ? TSCFG_TOK_WS_NEWLINE : TSCFG_TOK_WS;
+  tscfg_tok_tag tag = saw_newline ? TSCFG_TOK_WS_NEWLINE : TSCFG_TOK_WS;
   if (include_str) {
-    strbuf_finalize(&sb);
-    tok->length = sb.len;
-    tok->str = sb.str;
+    set_str_tok(tag, &sb, tok);
   } else {
-    tok->length = 0;
-    tok->str = NULL;
+    set_nostr_tok(tag, tok);
   }
 
   return TSCFG_OK;
@@ -703,10 +721,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
 
   }
 
-  tok->tag = TSCFG_TOK_NUMBER;
-  strbuf_finalize(&sb);
-  tok->length = sb.len;
-  tok->str = sb.str;
+  set_str_tok(TSCFG_TOK_NUMBER, &sb, tok);
   return TSCFG_OK;
 
 cleanup:
@@ -782,10 +797,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
     }
   } while (!end_of_string);
 
-  tok->tag = TSCFG_TOK_UNQUOTED;
-  strbuf_finalize(&sb);
-  tok->length = sb.len;
-  tok->str = sb.str;
+  set_str_tok(TSCFG_TOK_STRING, &sb, tok);
   return TSCFG_OK;
 
 cleanup:
@@ -910,10 +922,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
     sb.len += to_append;
   } while (!end_of_string);
 
-  tok->tag = TSCFG_TOK_UNQUOTED;
-  strbuf_finalize(&sb);
-  tok->length = sb.len;
-  tok->str = sb.str;
+  set_str_tok(TSCFG_TOK_STRING, &sb, tok);
   return TSCFG_OK;
 
 cleanup:
@@ -963,10 +972,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
 
   }
 
-  tok->tag = TSCFG_TOK_UNQUOTED;
-  strbuf_finalize(&sb);
-  tok->length = sb.len;
-  tok->str = sb.str;
+  set_str_tok(TSCFG_TOK_UNQUOTED, &sb, tok);
 
   return TSCFG_OK;
 
@@ -1013,13 +1019,9 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
   TSCFG_CHECK(rc);
 
   if (got == kwlen && memcmp(buf, kw, kwlen) == 0) {
-    tok->tag = kwtag;
-    strbuf_finalize(&sb);
-    tok->str = NULL;
-    tok->length = 0;
-
     lex_eat_bytes(lex, kwlen);
 
+    set_nostr_tok(kwtag, tok);
     return TSCFG_OK;
   } else {
     return extract_hocon_unquoted(lex, tok);

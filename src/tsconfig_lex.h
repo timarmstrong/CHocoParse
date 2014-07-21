@@ -47,12 +47,12 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 /*
  * Take ownership of string from token.
  */
-static inline char *tscfg_own_token(tscfg_tok *tok, size_t *length) {
+static inline char *tscfg_own_token(tscfg_tok *tok, size_t *len) {
   char *str = tok->str;
-  *length = tok->length;
+  *len = tok->len;
 
   tok->str = NULL;
-  tok->length = 0;
+  tok->len = 0;
   tok->tag = TSCFG_TOK_INVALID;
 
   return str;

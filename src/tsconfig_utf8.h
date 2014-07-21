@@ -26,7 +26,7 @@ typedef uint32_t tscfg_char_t;
  * return: TSCFG_OK if valid initial byte of UTF-8, TSCFG_ERR_INVALID
  *        if invalid initial byte.
  */
-static inline tscfg_rc tscfg_decode_byte1(unsigned char b, int *len,
+static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
                                          tscfg_char_t *accum);
 
 /*
@@ -35,14 +35,14 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, int *len,
  * accum: values added to accumulator
  * return: TSCFG_OK if valid bytes UTF-8, TSCFG_ERR_INVALID if invalid
  */
-static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, int len,
+static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
                                         tscfg_char_t *accum);
 
 
 /*==============================*
  * Inline function definitions  *
  *==============================*/
-static inline tscfg_rc tscfg_decode_byte1(unsigned char b, int *len,
+static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
                                          tscfg_char_t *accum) {
   if (b <= 0x7F)  { // Binary 0xxx xxxx
     *accum = 0x7F & b;
@@ -75,9 +75,9 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, int *len,
   }
 }
 
-static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, int len,
+static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
                                         tscfg_char_t *accum) {
-  for (int i = 0; i < len; i++) {
+  for (size_t i = 0; i < len; i++) {
     unsigned char b = s[i];
     // Must follow pattern 10xx xxxx
     if ((b & 0xC0) != 0x80) {

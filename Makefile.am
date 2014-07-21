@@ -1,7 +1,7 @@
 ACLOCAL_AMFLAGS = -I m4
 EXTRA_DIST = autogen.sh README.md
 
-AM_CFLAGS = -std=c99 -pedantic -Wall -Wextra
+AM_CFLAGS = -std=c99 -pedantic -Wall -Wextra -Wconversion
 AM_LDFLAGS =
 
 # Include all code in library

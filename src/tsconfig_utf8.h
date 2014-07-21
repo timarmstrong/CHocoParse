@@ -53,18 +53,23 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, int *len,
   } else if (b <= 0xDF) { // Binary 110x xxxx
     *accum = 0x1F & b;
     *len = 2;
+    return TSCFG_OK;
   } else if (b <= 0xEF) { // Binary 1110 xxxx
     *accum = 0x0F & b;
     *len = 3;
+    return TSCFG_OK;
   } else if (b <= 0xF7) { // Binary 1111 0xxx
     *accum = 0x07 & b;
     *len = 4;
+    return TSCFG_OK;
   } else if (b <= 0xFB) { // Binary 1111 10xx
     *accum = 0x03 & b;
     *len = 5;
+    return TSCFG_OK;
   } else if (b <= 0xFD) { // Binary 1111 110x
     *accum = 0x01 & b;
     *len = 6;
+    return TSCFG_OK;
   } else {
     return TSCFG_ERR_INVALID;
   }

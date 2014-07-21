@@ -263,9 +263,18 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
   size_t buf_pos = 0, buf_len = lex->buf_len;
   while (read_chars < nchars && buf_pos < buf_len) {
     unsigned char b = lex->buf[buf_pos++];
-    assert(b <= 127); // TODO: implement utf-8
+    int enc_len;
+    tscfg_char_t c;
 
-    buf[read_chars++] = (tscfg_char_t)b;
+    rc = tscfg_decode_byte1(b, &enc_len, &c);
+    TSCFG_CHECK(rc);
+
+    // TODO: check enough bytes in buffer
+    rc = tscfg_decode_rest(&lex->buf[buf_pos], enc_len - 1, &c);
+    TSCFG_CHECK(rc);
+    
+    buf_pos += (enc_len - 1);
+    chars[read_chars++] = c;
   }
 
   *got = read_chars;
@@ -359,11 +368,18 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
   Rely on caller having peeked at least this many characters ahead
  */
 static void lex_eat(tscfg_lex_state *lex, int chars) {
+  tscfg_rc rc;
   size_t byte_pos = 0;
-  while (int char_pos = 0; char_pos < chars; char_pos++) {
+  for (int char_pos = 0; char_pos < chars; char_pos++) {
+    tscfg_char_t c;
+    int enc_len;
+    unsigned char b = lex->buf[byte_pos];
+    
+    rc = tscfg_decode_byte1(b, &enc_len, &c);
+    assert(rc == TSCFG_OK); // Check caller was correct 
+
+    byte_pos += enc_len;
     assert(byte_pos < lex->buf_len);
-    unsigned char b = lex->buf[byte_pos++];
-    assert(b <= 127); // TODO: Implement utf-8
   }
 
   lex_eat_bytes(lex, byte_pos);
@@ -636,10 +652,10 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
 
   while (true) {
     size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
-    rc = strbuf_expand(sb, min_size, false);
+    rc = strbuf_expand(&sb, min_size, false);
     TSCFG_CHECK(rc);
 
-    char *pos = &sb.str[len];
+    char *pos = &sb.str[sb.len];
     size_t got;
     rc = lex_peek(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);

@@ -127,7 +127,7 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
   }
 
   if (open_tag != TSCFG_TOK_INVALID) {
-    tscfg_tok_tag open_tag;
+    tscfg_tok_tag close_tag;
 
     // Whitespace should be all consumed
     rc = peek_tag(&state, &close_tag);

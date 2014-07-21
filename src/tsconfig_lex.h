@@ -33,6 +33,9 @@ typedef struct {
   unsigned char *buf;
   size_t buf_size; // Size in bytes
   size_t buf_len; // Size in bytes
+
+  int line;
+  int line_pos;
 } tscfg_lex_state;
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in);

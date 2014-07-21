@@ -36,13 +36,14 @@ static inline tscfg_tok_tag tag_from_char(char c);
 
 static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
                          int nchars, int *got);
-static tscfg_rc lex_peek_bytes(tscfg_lex_state *lex, char *buf,
+static tscfg_rc lex_peek_ascii(tscfg_lex_state *lex, char *buf,
                                size_t len, size_t *got);
 static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes);
 static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static void lex_eat(tscfg_lex_state *lex, int chars);
 static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes);
+static void bump_data(tscfg_lex_state *lex, size_t bytes);
 
 static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize);
@@ -113,6 +114,8 @@ tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in) {
   lex->buf_size = buf_init_size;
   lex->buf_len = 0;
 
+  lex->line = 1;
+  lex->line_pos = 1;
   return TSCFG_OK;
 }
 
@@ -321,7 +324,7 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
  * Peek, interpreting as ASCII, i.e. 1 byte per char.
  *
  */
-static tscfg_rc lex_peek_bytes(tscfg_lex_state *lex, char *buf,
+static tscfg_rc lex_peek_ascii(tscfg_lex_state *lex, char *buf,
                                size_t len, size_t *got) {
   tscfg_rc rc;
 
@@ -416,14 +419,68 @@ static void lex_eat(tscfg_lex_state *lex, int chars) {
 
     byte_pos += enc_len;
     assert(byte_pos < lex->buf_len);
+
+    if (is_hocon_newline(b)) {
+      lex->line++;
+      lex->line_pos = 1;
+    } else {
+      lex->line_pos++;
+    }
   }
 
-  lex_eat_bytes(lex, byte_pos);
+  bump_data(lex, byte_pos);
 }
 
+/*
+ * Eat a certain number of bytes, while tracking position info.
+ * Note that this may advance the buffer to the middle of a UTF-8 character,
+ * so subsequent code cannot assume that it's positioned at the start of
+ * a UTF-8 character unless the caller has ensured that
+ *
+ * This function will behave correctly if a previous eat_bytes positioned
+ * this in the middle of a UTF-8 character.
+ */
 static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
-  assert(bytes <= lex->buf_len);
+  tscfg_rc rc;
 
+  size_t byte_pos = 0;
+  int char_pos = 0;
+
+  /*
+    Scan forward, parsing UTF-8 so that we get accurate char position info.
+    Note that byte_pos may overshoot bytes.  In this case the next
+   */
+  while (byte_pos < bytes) {
+    tscfg_char_t c;
+    int enc_len;
+    unsigned char b = lex->buf[byte_pos];
+
+    rc = tscfg_decode_byte1(b, &enc_len, &c);
+    if (rc == TSCFG_ERR_INVALID) {
+      // We're in middle of UTF-8 char, seek forward
+      byte_pos++;
+      continue;
+    } else {
+      assert(rc == TSCFG_OK); // Only other expected case
+    }
+
+    byte_pos += enc_len;
+    assert(byte_pos < lex->buf_len);
+    char_pos++;
+
+    if (is_hocon_newline(b)) {
+      lex->line++;
+      lex->line_pos = 1;
+    } else {
+      lex->line_pos++;
+    }
+  }
+
+  // Bump requested number of bytes (NOT to next character)
+  bump_data(lex, bytes);
+}
+
+static void bump_data(tscfg_lex_state *lex, size_t bytes) {
   /* Bump data forward
    * Note that this is inefficient if we are frequently bumping small portions
    * of a large buffer, since this requires moving the remainder of the buffer.
@@ -508,7 +565,7 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     char *buf = include_str ? &sb.str[sb.len] : buf_storage;
 
     size_t got;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_ascii(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {
@@ -573,7 +630,7 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     char *buf = include_str ? &sb.str[sb.len] : buf_storage;
 
     size_t got;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_ascii(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got < 2) {
@@ -651,7 +708,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
     char *buf = include_str ? &sb.str[sb.len] : buf_storage;
 
     size_t got;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_ascii(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     assert(got <= LEX_PEEK_BATCH_SIZE);
@@ -717,7 +774,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
 
     char *pos = &sb.str[sb.len];
     size_t got;
-    rc = lex_peek_bytes(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_ascii(lex, pos, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     assert(got <= LEX_PEEK_BATCH_SIZE);
@@ -766,7 +823,7 @@ static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
 
   char buf[2];
   size_t got = 0;
-  rc = lex_peek_bytes(lex, buf, 2, &got);
+  rc = lex_peek_ascii(lex, buf, 2, &got);
   TSCFG_CHECK(rc);
 
   if (got == 2 && memcmp(buf, "\"\"", 2) == 0) {
@@ -796,7 +853,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
     char buf[lookahead];
 
     size_t got;
-    rc = lex_peek_bytes(lex, buf, lookahead, &got);
+    rc = lex_peek_ascii(lex, buf, lookahead, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {
@@ -912,7 +969,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
     char *buf = &sb.str[sb.len];
 
     size_t got = 0;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = lex_peek_ascii(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     size_t to_append = 0;
@@ -1038,7 +1095,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
   char buf[kwlen];
   size_t got;
   // All keywords are 1 byte per character in utf-8
-  rc = lex_peek_bytes(lex, buf, kwlen, &got);
+  rc = lex_peek_ascii(lex, buf, kwlen, &got);
   TSCFG_CHECK(rc);
 
   if (got == kwlen && memcmp(buf, kw, kwlen) == 0) {

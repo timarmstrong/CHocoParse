@@ -322,6 +322,10 @@ static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
   return TSCFG_ERR_UNIMPL;
 }
 
+/*
+ * Parse a key comprised of at least one token.
+ * If there is not a valid key at the current position, return TSCFG_ERR_SYNTAX.
+ */
 static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
   // TODO: parse as value concatentation
   *toks = NULL;
@@ -330,7 +334,11 @@ static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
 }
 
 /*
-  Parse a value: nested object, array or concatenated tokens.
+ * Parse a value: nested object, array or concatenated tokens.
+ * Call the appropriate methods on the reader object as tokens, etc are
+ * encountered.
+ * If there is not a valid value at the current position,
+ * return TSCFG_ERR_SYNTAX.
  */
 static tscfg_rc value(ts_parse_state *state) {
     tscfg_rc rc;

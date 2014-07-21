@@ -67,9 +67,11 @@ static bool is_hocon_newline(tscfg_char_t c);
 static bool is_hocon_unquoted_char(tscfg_char_t c);
 static bool is_comment_start(const char *buf, size_t len);
 
+static void strbuf_init_empty(tscfg_strbuf *sb);
 static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size);
 static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
                               bool aggressive);
+static void strbuf_finalize(tscfg_strbuf *sb);
 static void strbuf_free(tscfg_strbuf *sb);
 
 /* Unicode characters according to database:
@@ -428,8 +430,12 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
   tscfg_rc rc;
 
   tscfg_strbuf sb;
-  rc = strbuf_init(&sb, include_str ? 32 : 0);
-  TSCFG_CHECK(rc);
+  if (include_str) {
+    rc = strbuf_init(&sb, 32);
+    TSCFG_CHECK(rc);
+  } else {
+    strbuf_init_empty(&sb);
+  }
 
   char buf_storage[LEX_PEEK_BATCH_SIZE];
 
@@ -469,12 +475,14 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
   tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
+    strbuf_finalize(&sb);
     tok->length = sb.len;
     tok->str = sb.str;
   } else {
     tok->length = 0;
     tok->str = 0;
   }
+
 
   return TSCFG_OK;
 
@@ -491,8 +499,12 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
   tscfg_rc rc;
 
   tscfg_strbuf sb;
-  rc = strbuf_init(&sb, include_str ? 64 : 0);
-  TSCFG_CHECK(rc);
+  if (include_str) {
+    rc = strbuf_init(&sb, 64);
+    TSCFG_CHECK(rc);
+  } else {
+    strbuf_init_empty(&sb);
+  }
 
   char buf_storage[LEX_PEEK_BATCH_SIZE];
 
@@ -543,6 +555,7 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
   tok->tag = TSCFG_TOK_COMMENT;
   if (include_str) {
+    strbuf_finalize(&sb);
     tok->length = sb.len;
     tok->str = sb.str;
   } else {
@@ -569,8 +582,12 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
   tscfg_rc rc;
 
   tscfg_strbuf sb;
-  rc = strbuf_init(&sb, include_str ? 128 : 0);
-  TSCFG_CHECK(rc);
+  if (include_str) {
+    rc = strbuf_init(&sb, 128);
+    TSCFG_CHECK(rc);
+  } else {
+    strbuf_init_empty(&sb);
+  }
 
   char buf_storage[LEX_PEEK_BATCH_SIZE];
   bool saw_newline = false;
@@ -617,6 +634,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
 
   tok->tag = saw_newline ? TSCFG_TOK_WS_NEWLINE : TSCFG_TOK_WS;
   if (include_str) {
+    strbuf_finalize(&sb);
     tok->length = sb.len;
     tok->str = sb.str;
   } else {
@@ -686,6 +704,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
   }
 
   tok->tag = TSCFG_TOK_NUMBER;
+  strbuf_finalize(&sb);
   tok->length = sb.len;
   tok->str = sb.str;
   return TSCFG_OK;
@@ -764,6 +783,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
+  strbuf_finalize(&sb);
   tok->length = sb.len;
   tok->str = sb.str;
   return TSCFG_OK;
@@ -891,6 +911,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
   } while (!end_of_string);
 
   tok->tag = TSCFG_TOK_UNQUOTED;
+  strbuf_finalize(&sb);
   tok->length = sb.len;
   tok->str = sb.str;
   return TSCFG_OK;
@@ -943,6 +964,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   }
 
   tok->tag = TSCFG_TOK_UNQUOTED;
+  strbuf_finalize(&sb);
   tok->length = sb.len;
   tok->str = sb.str;
 
@@ -992,6 +1014,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
 
   if (got == kwlen && memcmp(buf, kw, kwlen) == 0) {
     tok->tag = kwtag;
+    strbuf_finalize(&sb);
     tok->str = NULL;
     tok->length = 0;
 
@@ -1084,10 +1107,24 @@ static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...) {
   va_end(args);
 }
 
+/*
+ * Initialise to empty state
+ */
+static void strbuf_init_empty(tscfg_strbuf *sb) {
+  sb->str = NULL;
+  sb->size = 0;
+  sb->len = 0;
+}
+
+/*
+ * Allocate to be large enough to hold string of init_size
+ */
 static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size) {
   if (init_size == 0) {
     sb->str = NULL;
   } else {
+    init_size++; // Null term
+
     sb->str = malloc(init_size);
     TSCFG_CHECK_MALLOC(sb->str);
   }
@@ -1098,11 +1135,13 @@ static tscfg_rc strbuf_init(tscfg_strbuf *sb, size_t init_size) {
 }
 
 /*
- *
+ * Expand to hold string of length min_size, plus null terminator.
  * aggressive: if true, aggressively allocate memory
  */
 static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
                               bool aggressive) {
+  min_size++; // Null term
+
   if (sb->size < min_size) {
     size_t new_size;
     if (aggressive) {
@@ -1118,6 +1157,15 @@ static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
   }
 
   return TSCFG_OK;
+}
+
+static void strbuf_finalize(tscfg_strbuf *sb) {
+  if (sb->str == NULL) {
+    assert(sb->size == 0 && sb->len == 0);
+  } else {
+    assert(sb->size > sb->len); // Need space for null term
+    sb->str[sb->len] = '\0';
+  }
 }
 
 static void strbuf_free(tscfg_strbuf *sb) {

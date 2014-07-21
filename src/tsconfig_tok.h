@@ -55,7 +55,8 @@ typedef enum {
  */
 typedef struct {
   tscfg_tok_tag tag;
-  /* String, if any.  *Not* null terminated */
+  /* String, if any.  Null terminated, but may have nulls in string if
+     they were in input. */
   char *str;
   size_t length;
 } tscfg_tok;

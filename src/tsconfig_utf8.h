@@ -48,11 +48,21 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
     *accum = 0x7F & b;
     *len = 1;
     return TSCFG_OK;
-  } else if (b <= 0xBF) {
+  } else if (b <= 0xC1) {
+    /*
+     * Detect continuation bytes <= 0xBF, i.e. binary 10xx xxxx and
+     * overlong 2-byte encodings of 1-byte characters: 0xC0 and 0xC1,
+     * i.e. binary 1100 000x.
+     */
     return TSCFG_ERR_INVALID;
   } else if (b <= 0xDF) { // Binary 110x xxxx
-    *accum = 0x1F & b;
+    unsigned char val = 0x1F & b;
+    if (val <= 0x1) {
+      return TSCFG_ERR_INVALID;
+    }
+
     *len = 2;
+    *accum = val;
     return TSCFG_OK;
   } else if (b <= 0xEF) { // Binary 1110 xxxx
     *accum = 0x0F & b;
@@ -77,6 +87,17 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
 
 static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
                                         tscfg_char_t *accum) {
+  if (*accum == 0) {
+    /*
+     * Detect overlong encoding.
+     * This handles all cases of overlong characters where it was extended
+     * by > 1 byte, or where the canonical encoding is longer than 1 byte.
+     * This leaves 2 byte encodings of 1 byte characters, which is handled
+     * above.
+     */
+    return TSCFG_ERR_INVALID;
+  }
+
   for (size_t i = 0; i < len; i++) {
     unsigned char b = s[i];
     // Must follow pattern 10xx xxxx
@@ -85,6 +106,11 @@ static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
     }
 
     *accum = ((*accum) << 6) + (b & 0x3F);
+  }
+
+  // Out of Unicode range
+  if (*accum > 0x10FFFF) {
+    return TSCFG_ERR_INVALID;
   }
 
   return TSCFG_OK;

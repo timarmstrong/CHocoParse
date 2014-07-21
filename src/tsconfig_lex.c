@@ -967,10 +967,11 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
   TSCFG_CHECK(rc);
 
   while (true) {
+    const int UNQUOTED_LOOKAHEAD = 2;
     // Need to interpret as unicode
-    tscfg_char_t buf[2];
+    tscfg_char_t buf[UNQUOTED_LOOKAHEAD];
     int got;
-    rc = lex_peek(lex, buf, 2, &got);
+    rc = lex_peek(lex, buf, UNQUOTED_LOOKAHEAD, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {

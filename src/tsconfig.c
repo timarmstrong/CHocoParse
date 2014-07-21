@@ -40,7 +40,8 @@ static tscfg_rc tree_reader_init(tscfg_reader *reader, void **reader_state);
 
 static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
                             void *reader_state);
-static tscfg_rc parse_hocon_body(ts_parse_state *state);
+static tscfg_rc parse_hocon_obj_body(ts_parse_state *state);
+static tscfg_rc parse_hocon_arr_body(ts_parse_state *state);
 
 static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
@@ -115,13 +116,13 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
     open_tag = TSCFG_TOK_INVALID;
   }
 
-  if (open_tag == TSCFG_OPEN_SQUARE) {
+  if (open_tag == TSCFG_TOK_OPEN_SQUARE) {
     // Array
-    rc = parse_hocon_array(&state);
+    rc = parse_hocon_arr_body(&state);
     TSCFG_CHECK_GOTO(rc, cleanup);
   } else {
     // Explicit or implicit object
-    rc = parse_hocon_body(&state);
+    rc = parse_hocon_obj_body(&state);
     TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
@@ -166,13 +167,15 @@ cleanup:
 /*
  * Parse contents between { and }.
  */
-static tscfg_rc parse_hocon_body(ts_parse_state *state) {
+static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
   tscfg_rc rc;
+  bool ok;
 
   rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
-  /*TODO
-    ok = state->reader.obj_start(state->reader_state); */
+
+  ok = state->reader.obj_start(state->reader_state);
+  TSCFG_COND(ok, TSCFG_ERR_READER);
 
   bool no_more_items = false;
   do {
@@ -183,8 +186,8 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
     TSCFG_CHECK(rc);
     if (tag == TSCFG_TOK_CLOSE_BRACE ||
         tag == TSCFG_TOK_EOF) {
-      /*TODO
-       ok = state->reader.obj_end(state->reader_state); */
+      ok = state->reader.obj_end(state->reader_state);
+      TSCFG_COND(ok, TSCFG_ERR_READER);
       return TSCFG_OK;
     }
 
@@ -194,9 +197,9 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
     rc = kv_sep(state, NULL);
     TSCFG_CHECK(rc);
 
-    /*TODO
-      ok = state->reader.key_val_start(state->reader_state,
-            key_toks, nkey_toks, sep); */
+    ok = state->reader.key_val_start(state->reader_state,
+            key_toks, nkey_toks, sep);
+    TSCFG_COND(ok, TSCFG_ERR_READER);
 
     // TODO
     // value: nested object, or token or expression, or multiple tokens
@@ -237,8 +240,10 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
         return TSCFG_ERR_UNIMPL;
       }
     }
-    /*TODO
-      ok = state->reader.key_val_end(state->reader_state); */
+
+    ok = state->reader.key_val_end(state->reader_state);
+    TSCFG_COND(ok, TSCFG_ERR_READER);
+
   } while (!no_more_items);
 
   tscfg_tok_tag tag;
@@ -247,13 +252,22 @@ static tscfg_rc parse_hocon_body(ts_parse_state *state) {
 
   if (tag == TSCFG_TOK_CLOSE_BRACE ||
       tag == TSCFG_TOK_EOF) {
-    /*TODO
-      ok = state->reader.obj_end(state->reader_state); */
+    ok = state->reader.obj_end(state->reader_state);
+    TSCFG_COND(ok, TSCFG_ERR_READER);
+
     return TSCFG_OK;
   } else {
     tscfg_report_err("Expected end of object but got something else.");
     return TSCFG_ERR_SYNTAX;
   }
+}
+
+/*
+ * Parse contents between [ and ].
+ */
+static tscfg_rc parse_hocon_arr_body(ts_parse_state *state) {
+  // TODO
+  return TSCFG_ERR_UNIMPL;
 }
 
 /*

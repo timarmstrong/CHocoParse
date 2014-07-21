@@ -28,4 +28,8 @@ void tscfg_report_err_v(const char *fmt, va_list args);
 #define TSCFG_CHECK_MALLOC_GOTO(ptr, label, rc_var) { \
   if ((ptr) == NULL) { (rc_var) = TSCFG_ERR_OOM; goto label; }}
 
+// Check boolean condition
+#define TSCFG_COND(cond, err_rc) { \
+  if (!(cond)) return (err_rc); }
+
 #endif // __TSCONFIG_ERR_H

@@ -52,6 +52,8 @@ tscfg_rc tsconfig_parse_tree(tsconfig_input in, tscfg_fmt fmt,
 
 /*
  * Parse a typesafe config file with a custom reader.
+ *
+ * If the reader returns an error, this returns TSCFG_ERR_READER
  */
 tscfg_rc tsconfig_parse(tsconfig_input in, tscfg_fmt fmt,
       tscfg_reader reader, void *reader_state);

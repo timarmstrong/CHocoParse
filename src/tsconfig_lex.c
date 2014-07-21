@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "tsconfig_err.h"
+#include "tsconfig_utf8.h"
 
 // Default amount to buffer when searching ahead
 #define LEX_PEEK_BATCH_SIZE 32

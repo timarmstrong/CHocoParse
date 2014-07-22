@@ -58,8 +58,6 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got, bool include_ws);
 static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag);
-static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
-                       bool skip_ws, bool *match);
 
 static void free_toks(tscfg_tok *toks, int count);
 static void pop_toks(ts_parse_state *state, int count);
@@ -342,7 +340,24 @@ static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
  */
 static tscfg_rc value(ts_parse_state *state) {
     tscfg_rc rc;
-    // TODO: nested objects/arrays?
+    
+    tscfg_tok_tag tag;
+    rc = peek_tag_skip_ws(&state, &tag);
+    TSCFG_CHECK(rc);
+
+    switch (tag) {
+      case TSCFG_TOK_OPEN_BRACE:
+        // TODO: object
+        return TSCFG_ERR_UNIMPL;
+      
+      case TSCFG_TOK_OPEN_SQUARE:
+        // TODO: array
+        return TSCFG_ERR_UNIMPL;
+    
+      default:
+        // Attempt to parse value concatenation
+    }
+    
     // Loop until end of value
     while (true) {
 
@@ -509,23 +524,6 @@ static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag){
   } else {
     *tag = tok.tag;
   }
-
-  return TSCFG_OK;
-}
-
-/*
- * Check if next token matches.
- * match: set to false if no next token (EOF) or if token is different type
- */
-static tscfg_rc next_tok_matches(ts_parse_state *state, tscfg_tok_tag tag,
-                       bool skip_ws, bool *match) {
-  tscfg_tok_tag next_tag;
-  tscfg_rc rc = skip_ws ?
-                peek_tag_skip_ws(state, &next_tag) :
-                peek_tag(state, &next_tag);
-  TSCFG_CHECK(rc);
-
-  *match = (next_tag == tag);
 
   return TSCFG_OK;
 }

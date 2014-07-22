@@ -484,7 +484,10 @@ static void lex_update_line(tscfg_lex_state *lex, unsigned char b) {
   }
 }
 
-
+/*
+ * Copy first UTF-8 character.
+ * Assumes that it has been validated already.
+ */
 static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize) {
   tscfg_rc rc;
@@ -855,6 +858,10 @@ static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   }
 }
 
+/*
+ * Extract JSON string, processing escape codes.
+ * Assume initial " has been consumed.
+ */
 static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
   tscfg_strbuf sb;
@@ -885,7 +892,6 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
       rc = extract_json_str_escape(lex, &escaped);
       TSCFG_CHECK_GOTO(rc, cleanup);
 
-      // TODO: implement UTF-8 encode
       rc = strbuf_append_utf8(&sb, c, true);
       TSCFG_CHECK_GOTO(rc, cleanup);
     } else {
@@ -1017,7 +1023,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
   rc = strbuf_init(&sb, 128);
   TSCFG_CHECK(rc);
 
-  bool in_string = false;
+  bool in_string = true;
   while (in_string) {
     bool found_quote;
 
@@ -1095,7 +1101,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
       break;
     }
 
-    // Append first rotcharacter and advance
+    // Append first character and advance
     rc = lex_copy_char(lex, &sb, true);
     TSCFG_CHECK_GOTO(rc, cleanup);
 

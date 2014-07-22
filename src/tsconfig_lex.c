@@ -45,7 +45,8 @@ static tscfg_rc lex_read_more(tscfg_lex_state *lex, size_t bytes);
 static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
                          size_t *read_bytes);
 static void lex_eat(tscfg_lex_state *lex, int chars);
-static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes);
+static void lex_eat_ascii(tscfg_lex_state *lex, size_t bytes);
+static void lex_update_line(tscfg_lex_state *lex, unsigned char b);
 
 static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize);
@@ -73,6 +74,12 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
                                         tscfg_char_t c, tscfg_tok *tok);
+
+static tscfg_rc extract_until(tscfg_lex_state *lex, tscfg_strbuf *sb,
+                              tscfg_char_t match, bool *found);
+
+static tscfg_rc eat_until(tscfg_lex_state *lex, tscfg_char_t match,
+                          bool *found);
 
 static bool is_hocon_whitespace(tscfg_char_t c);
 static bool is_hocon_newline(tscfg_char_t c);
@@ -341,7 +348,6 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
 
 /*
  * Peek, interpreting as ASCII, i.e. 1 byte per char.
- *
  */
 static tscfg_rc lex_peek_bytes(tscfg_lex_state *lex, char *buf,
                                size_t len, size_t *got) {
@@ -447,63 +453,35 @@ static void lex_eat(tscfg_lex_state *lex, int chars) {
     lex->buf_pos += enc_len;
     lex->buf_len -= enc_len;
 
-    if (is_hocon_newline(b)) {
-      lex->line++;
-      lex->line_char = 1;
-    } else {
-      lex->line_char++;
-    }
+    lex_update_line(lex, b);
   }
 }
 
 /*
- * Eat a certain number of bytes, while tracking position info.
- * Note that this may advance the buffer to the middle of a UTF-8 character,
- * so subsequent code cannot assume that it's positioned at the start of
- * a UTF-8 character unless the caller has ensured that
- *
- * This function will behave correctly if a previous eat_bytes positioned
- * this in the middle of a UTF-8 character.
+ * Eat a certain number of single-byte ascii characters.
+ * Assertion error max occur if char isn't ascii
  */
-static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
-  tscfg_rc rc;
+static void lex_eat_ascii(tscfg_lex_state *lex, size_t bytes) {
+  for (size_t i = 0; i < bytes; i++) {
+    unsigned char b = lex->buf[lex->buf_pos + i];
+    assert(b <= 127);
 
-  size_t byte_pos = 0;
-
-  /*
-    Scan forward, parsing UTF-8 so that we get accurate char position info.
-    Note that byte_pos may overshoot bytes.  In this case the caller must
-    be ready to handle this case.
-   */
-  while (byte_pos < bytes) {
-    // Start of UTF-8 char should be in buffer
-    assert(byte_pos < lex->buf_len);
-
-    tscfg_char_t c;
-    size_t enc_len;
-    unsigned char b = lex->buf[lex->buf_pos + byte_pos];
-
-    rc = tscfg_decode_byte1(b, &enc_len, &c);
-    if (rc == TSCFG_ERR_INVALID) {
-      // We're in middle of UTF-8 char, seek forward
-      byte_pos++;
-      continue;
-    } else {
-      assert(rc == TSCFG_OK); // Only other expected case
-    }
-
-    byte_pos += enc_len;
-
-    if (is_hocon_newline(b)) {
-      lex->line++;
-      lex->line_char = 1;
-    } else {
-      lex->line_char++;
-    }
+    lex_update_line(lex, b);
   }
 
-  // Bump requested number of bytes (*not* to next character necessarily)
   lex->buf_pos += bytes;
+}
+
+/*
+ * Update line position based on first byte of consumed character
+ */
+static void lex_update_line(tscfg_lex_state *lex, unsigned char b) {
+  if (is_hocon_newline(b)) {
+    lex->line++;
+    lex->line_char = 1;
+  } else {
+    lex->line_char++;
+  }
 }
 
 
@@ -513,17 +491,20 @@ static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
 
   size_t enc_len;
   tscfg_char_t c;
-  rc = tscfg_decode_byte1(lex->buf[0], &enc_len, &c);
+  unsigned char b = lex->buf[0];
+  rc = tscfg_decode_byte1(b, &enc_len, &c);
 
   // Check caller called when in valid state
   assert(rc == TSCFG_OK);
+
   assert(enc_len <= lex->buf_len);
 
   rc = strbuf_expand(sb, sb->len + enc_len, aggressive_resize);
   memcpy(&sb->str[sb->len], lex->buf, enc_len);
   sb->len += enc_len;
 
-  lex_eat_bytes(lex, enc_len);
+  lex_update_line(lex, b);
+  lex->buf_pos += enc_len;
 
   return TSCFG_OK;
 }
@@ -552,53 +533,31 @@ static tscfg_rc extract_comment_or_hocon_unquoted(tscfg_lex_state *lex,
   }
 }
 
+/*
+ * Extract up to but not including newline.
+ */
 static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str) {
   tscfg_rc rc;
 
   tscfg_strbuf sb;
+  bool found_nl;
   if (include_str) {
     rc = strbuf_init(&sb, 32);
     TSCFG_CHECK(rc);
+
+    // Don't care if we found newline
+    rc = extract_until(lex, &sb, '\n', &found_nl);
+    TSCFG_CHECK_GOTO(rc, cleanup);
   } else {
     strbuf_init_empty(&sb);
-  }
 
-  char buf_storage[LEX_PEEK_BATCH_SIZE];
-
-  bool end_of_line = false;
-
-  while (!end_of_line) {
-
-    if (include_str) {
-      // Resize more aggressively since strings are often long
-      size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
-      rc = strbuf_expand(&sb, min_size, true);
-      TSCFG_CHECK(rc);
-    }
-
-    char *buf = include_str ? &sb.str[sb.len] : buf_storage;
-
-    size_t got;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    // Don't care if we found newline
+    rc = eat_until(lex, '\n', &found_nl);
     TSCFG_CHECK_GOTO(rc, cleanup);
-
-    if (got == 0) {
-      break;
-    }
-
-    const char *nl = memchr(buf, '\n', got);
-    size_t num_chars;
-    if (nl == NULL) {
-      num_chars = got;
-    } else {
-      num_chars = (size_t)(nl - buf);
-      end_of_line = true;
-    }
-
-    lex_eat_bytes(lex, num_chars);
-    sb.len += num_chars;
   }
+
+  // Don't care if we found newline
 
   if (include_str) {
     set_str_tok(TSCFG_TOK_COMMENT, &sb, tok);
@@ -606,12 +565,73 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     set_nostr_tok(TSCFG_TOK_COMMENT, tok);
   }
 
-
   return TSCFG_OK;
 
 cleanup:
   strbuf_free(&sb);
   return rc;
+}
+
+/*
+ * Search for matching char and consume up to, but not including,
+ * that character.
+ * sb: append characters consumed to this buffer
+ * match: char to search for
+ * found: set to true/false if successfully completed
+ */
+static tscfg_rc extract_until(tscfg_lex_state *lex, tscfg_strbuf *sb,
+                              tscfg_char_t match, bool *found) {
+  tscfg_rc rc;
+
+  while (true) {
+    tscfg_char_t c;
+    int got;
+    rc = lex_peek(lex, &c, 1, &got);
+    TSCFG_CHECK(rc);
+
+    if (got == 0) {
+      *found = false;
+      return TSCFG_OK;
+    }
+
+    if (c == match) {
+      *found = true;
+      return TSCFG_OK;
+    }
+
+    rc = lex_copy_char(lex, sb, true);
+    TSCFG_CHECK(rc);
+  }
+}
+
+/*
+ * Search for matching char and consume up to, but not including,
+ * that character.
+ * match: char to search for
+ * found: set to true/false if successfully completed
+ */
+static tscfg_rc eat_until(tscfg_lex_state *lex, tscfg_char_t match,
+                          bool *found) {
+  tscfg_rc rc;
+
+  while (true) {
+    tscfg_char_t c;
+    int got;
+    rc = lex_peek(lex, &c, 1, &got);
+    TSCFG_CHECK(rc);
+
+    if (got == 0) {
+      *found = false;
+      return TSCFG_OK;
+    }
+
+    if (c == match) {
+      *found = true;
+      return TSCFG_OK;
+    }
+
+    lex_eat(lex, 1);
+  }
 }
 
 /*
@@ -629,51 +649,41 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
     strbuf_init_empty(&sb);
   }
 
-  char buf_storage[LEX_PEEK_BATCH_SIZE];
-
-  bool in_comment = true;
-
-  while (in_comment) {
+  while (true) {
+    bool found_ast;
 
     if (include_str) {
-      // Resize more aggressively since comments are often long
-      size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
-      rc = strbuf_expand(&sb, min_size, true);
-      TSCFG_CHECK(rc);
+      rc = extract_until(lex, &sb, '*', &found_ast);
+      TSCFG_CHECK_GOTO(rc, cleanup);
+    } else {
+      rc = eat_until(lex, '*', &found_ast);
+      TSCFG_CHECK_GOTO(rc, cleanup);
     }
 
-    char *buf = include_str ? &sb.str[sb.len] : buf_storage;
-
-    size_t got;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    int got;
+    tscfg_char_t buf[2];
+    rc = lex_peek(lex, buf, 2, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got < 2) {
       // Cannot be comment close, therefore unclosed comment
-
-      lex_eat_bytes(lex, got);
-      sb.len += got;
-
       lex_report_err(lex, "/* comment without matching */");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
 
-    size_t num_chars = 0;
-    while (num_chars < got - 1) {
-      if (buf[num_chars] == '*' && buf[num_chars + 1] == '/') {
-        num_chars += 2;
-        in_comment = false;
-        break;
+    if (buf[1] == '/') {
+      lex_eat(lex, 2);
+      break;
+    } else {
+      // * is part of comment
+      if (include_str) {
+        rc = lex_copy_char(lex, &sb, true);
+        TSCFG_CHECK(rc);
       } else {
-        // May not need to check next position
-        size_t advance = (buf[num_chars + 1] == '*') ? 1 : 2;
-        num_chars += advance;
+        lex_eat(lex, 1);
       }
     }
-
-    lex_eat_bytes(lex, num_chars);
-    sb.len += num_chars;
   }
 
   if (include_str) {
@@ -802,7 +812,8 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
     }
 
     if (nbytes > 0) {
-      lex_eat_bytes(lex, nbytes);
+      // Any characters consumed are in ASCII range
+      lex_eat_ascii(lex, nbytes);
       sb.len += nbytes;
     }
 
@@ -827,7 +838,7 @@ cleanup:
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   tscfg_rc rc;
   // Remove initial "
-  lex_eat_bytes(lex, 1);
+  lex_eat_ascii(lex, 1);
 
   char buf[2];
   size_t got = 0;
@@ -835,7 +846,7 @@ static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   TSCFG_CHECK(rc);
 
   if (got == 2 && memcmp(buf, "\"\"", 2) == 0) {
-    lex_eat_bytes(lex, 2);
+    lex_eat_ascii(lex, 2);
     // Multiline string
     return extract_hocon_multiline_str(lex, tok);
   } else {
@@ -1006,53 +1017,42 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
   rc = strbuf_init(&sb, 128);
   TSCFG_CHECK(rc);
 
-  bool end_of_string = false;
-  do {
-    assert(LEX_PEEK_BATCH_SIZE >= 4); // Look for triple quote plus one
+  bool in_string = false;
+  while (in_string) {
+    bool found_quote;
 
-    // Resize more aggressively since strings are often long
-    size_t min_size = sb.len + LEX_PEEK_BATCH_SIZE;
-    rc = strbuf_expand(&sb, min_size, true);
-    TSCFG_CHECK(rc);
-
-    char *buf = &sb.str[sb.len];
-
-    size_t got = 0;
-    rc = lex_peek_bytes(lex, buf, LEX_PEEK_BATCH_SIZE, &got);
+    rc = extract_until(lex, &sb, '"', &found_quote);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
-    size_t to_append = 0;
+    const size_t lookahead_bytes = 4;
+    char buf[lookahead_bytes];
+    size_t got = 0;
+    rc = lex_peek_bytes(lex, buf, lookahead_bytes, &got);
+    TSCFG_CHECK_GOTO(rc, cleanup);
+
     if (got < 3) {
       lex_report_err(lex, "Unterminated \"\"\" string");
-      return TSCFG_ERR_SYNTAX;
+      rc = TSCFG_ERR_SYNTAX;
+      goto cleanup;
     }
 
-    const char *quote = memchr(buf, '\"', got);
-    if (quote == NULL) {
-      to_append = got;
-    } else {
-      size_t before_quote = (size_t)(quote - buf);
-      to_append = (size_t)before_quote;
-      if (got - before_quote < 4) {
-        // Need to advance further to check quotes
-      } else if (memcmp(quote, "\"\"\"", 3) == 0) {
-        // Need to match last """ according to HOCON
-        if (quote[3] == '"') {
-          to_append++; // First " is part of string
-        } else {
-          // Closing """
-          end_of_string = true;
-        }
+    if (memcmp(buf, "\"\"\"", 3) == 0) {
+      // Need to match last """ according to HOCON
+      if (buf[3] == '"') {
+        // Consume first ", then try again
+        rc = lex_copy_char(lex, &sb, true);
+        TSCFG_CHECK_GOTO(rc, cleanup);
       } else {
-        // Last quote could be part of end quote
-        to_append += 2;
+        // Closing """, don't append to string
+        lex_eat_ascii(lex, 3);
+        in_string = false;
       }
+    } else {
+      // Not terminating quote, append and move on
+      rc = lex_copy_char(lex, &sb, true);
+      TSCFG_CHECK_GOTO(rc, cleanup);
     }
-
-    assert(to_append != 0);
-    lex_eat_bytes(lex, to_append);
-    sb.len += to_append;
-  } while (!end_of_string);
+  }
 
   set_str_tok(TSCFG_TOK_STRING, &sb, tok);
   return TSCFG_OK;
@@ -1148,7 +1148,7 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
   TSCFG_CHECK(rc);
 
   if (got == kwlen && memcmp(buf, kw, kwlen) == 0) {
-    lex_eat_bytes(lex, kwlen);
+    lex_eat_ascii(lex, kwlen);
 
     set_nostr_tok(kwtag, tok);
     return TSCFG_OK;

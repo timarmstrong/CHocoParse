@@ -1,8 +1,6 @@
 List of miscellaneous unimplemented features.
 
 * Include statements.
-* Detection of invalid UTF-8 input, e.g. for strings or variable names:
-  in some cases bad UTF-8 will be passed through tokens.
 * Error handling API, e.g. storing error state
 
 * Post-processing stage where variables, concatenations and overwrites

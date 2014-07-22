@@ -38,7 +38,6 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
 static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
                                         tscfg_char_t *accum);
 
-
 /*==============================*
  * Inline function definitions  *
  *==============================*/

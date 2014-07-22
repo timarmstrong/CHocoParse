@@ -22,6 +22,9 @@
 // Max bytes per encoded UTF-8 character
 #define UTF8_MAX_BYTES 6
 
+// Unicode escape code length (hex digits)
+#define UNICODE_ESCAPE_LEN 4
+
 typedef struct {
   char *str;
   size_t size; // Allocated size in bytes
@@ -44,7 +47,7 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
 static void lex_eat(tscfg_lex_state *lex, int chars);
 static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes);
 
-static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
+static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize);
 
 static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
@@ -61,8 +64,10 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
                                     tscfg_tok *tok);
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok);
-static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
-                    size_t len, char *result, size_t *consumed);
+static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex,
+                                        tscfg_char_t *result);
+static tscfg_rc extract_unicode_escape(tscfg_lex_state *lex, tscfg_char_t *c);
+
 static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
                                             tscfg_tok *tok);
 static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok);
@@ -80,6 +85,8 @@ static tscfg_rc strbuf_expand(tscfg_strbuf *sb, size_t min_size,
                               bool aggressive);
 static void strbuf_finalize(tscfg_strbuf *sb);
 static void strbuf_free(tscfg_strbuf *sb);
+static tscfg_rc strbuf_append_utf8(tscfg_strbuf *sb, tscfg_char_t c,
+                              bool aggressive);
 
 /* Unicode characters according to database:
   http://www.unicode.org/Public/7.0.0/ucd/PropList.txt */
@@ -500,7 +507,7 @@ static void lex_eat_bytes(tscfg_lex_state *lex, size_t bytes) {
 }
 
 
-static tscfg_rc lex_append_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
+static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
                             bool aggressive_resize) {
   tscfg_rc rc;
 
@@ -718,7 +725,7 @@ static tscfg_rc extract_hocon_ws(tscfg_lex_state *lex, tscfg_tok *tok,
     }
 
     if (include_str) {
-      rc = lex_append_char(lex, &sb, true);
+      rc = lex_copy_char(lex, &sb, true);
       TSCFG_CHECK_GOTO(rc, cleanup);
     } else {
       lex_eat(lex, 1);
@@ -846,15 +853,9 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
   bool end_of_string = false;
 
   do {
-    size_t min_size = sb.len + 2;
-    rc = strbuf_expand(&sb, min_size, false);
-    TSCFG_CHECK(rc);
-
-    const size_t lookahead = 5; // Enough to handle all escape codes
-    char buf[lookahead];
-
-    size_t got;
-    rc = lex_peek_bytes(lex, buf, lookahead, &got);
+    tscfg_char_t c;
+    int got;
+    rc = lex_peek(lex, &c, 1, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got == 0) {
@@ -863,21 +864,22 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
       goto cleanup;
     }
 
-    char c = buf[0];
     if (c == '"') {
-      lex_eat_bytes(lex, 1);
+      lex_eat(lex, 1);
       end_of_string = true;
     } else if (c == '\\') {
-      char escaped;
-      size_t escape_len;
-      rc = extract_json_str_escape(lex, buf, got, &escaped, &escape_len);
+      lex_eat(lex, 1);
+      tscfg_char_t escaped;
+
+      rc = extract_json_str_escape(lex, &escaped);
       TSCFG_CHECK_GOTO(rc, cleanup);
 
-      sb.len++;
-      lex_eat_bytes(lex, escape_len);
+      // TODO: implement UTF-8 encode
+      rc = strbuf_append_utf8(&sb, c, true);
+      TSCFG_CHECK_GOTO(rc, cleanup);
     } else {
-      lex_eat_bytes(lex, 1);
-      sb.str[sb.len++] = buf[0];
+      rc = lex_copy_char(lex, &sb, true);
+      TSCFG_CHECK_GOTO(rc, cleanup);
     }
   } while (!end_of_string);
 
@@ -892,57 +894,103 @@ cleanup:
 /*
  * Handle a JSON string escape code.
  *
- * escape: escape sequence, including initial \, plus maybe trailing chars
- * len: length of sequence, including any trailing chars
+ * Lexer should be positioned just past initial \, and it advanced past
+ * end of escape code if valid
  * result: escaped character
- * consumed: number of characters consumed
  */
-static tscfg_rc extract_json_str_escape(tscfg_lex_state *lex, char *escape,
-                    size_t len, char *result, size_t *consumed) {
-  assert(len >= 1);
-  assert(escape[0] == '\\');
+static tscfg_rc
+extract_json_str_escape(tscfg_lex_state *lex, tscfg_char_t *result) {
+  tscfg_rc rc;
+  tscfg_char_t first;
+  int got;
 
-  if (len == 1) {
+  rc = lex_peek(lex, &first, 1, &got);
+  TSCFG_CHECK(rc);
+
+  if (got == 0) {
     lex_report_err(lex, "\\ without escape code in string");
     return TSCFG_ERR_SYNTAX;
   }
 
-  char c = escape[1];
-  switch (c) {
+  switch (first) {
     case '\\':
     case '"':
     case '/':
-      *result = c;
-      *consumed = 2;
+      *result = first;
+      lex_eat(lex, 1);
       break;
     case 'b':
       *result = '\b';
-      *consumed = 2;
+      lex_eat(lex, 1);
       break;
     case 'f':
       *result = '\f';
-      *consumed = 2;
+      lex_eat(lex, 1);
       break;
     case 'n':
       *result = '\n';
-      *consumed = 2;
+      lex_eat(lex, 1);
       break;
     case 'r':
       *result = '\r';
-      *consumed = 2;
+      lex_eat(lex, 1);
       break;
     case 't':
       *result = '\t';
-      *consumed = 2;
+      lex_eat(lex, 1);
       break;
     case 'u':
-      // TODO: implement unicode escape codes
-      return TSCFG_ERR_UNIMPL;
+      lex_eat(lex, 1);
+
+      rc = extract_unicode_escape(lex, result);
+      TSCFG_CHECK(rc);
+
+      return TSCFG_OK;
     default:
       // TODO: invalid escape codes
       return TSCFG_ERR_UNIMPL;
   }
 
+  return TSCFG_OK;
+}
+
+/*
+ * Decode unicode escape code at current position.
+ * Escape has four hex character digits (e.g. '1', 'A', 'f')
+ */
+static tscfg_rc extract_unicode_escape(tscfg_lex_state *lex, tscfg_char_t *c) {
+  tscfg_rc rc;
+  tscfg_char_t unicode_esc[UNICODE_ESCAPE_LEN];
+  int got;
+
+  rc = lex_peek(lex, unicode_esc, UNICODE_ESCAPE_LEN, &got);
+  TSCFG_CHECK(rc);
+
+  if (got < UNICODE_ESCAPE_LEN) {
+    lex_report_err(lex, "Incomplete unicode escape \\uxxxx in string: "
+                        "expected four hexadecimal digits");
+    return TSCFG_ERR_SYNTAX;
+  }
+
+  tscfg_char_t unicode = 0;
+  for (int i = 0; i < UNICODE_ESCAPE_LEN; i++) {
+    tscfg_char_t hex_c = unicode_esc[i];
+    unicode <<= 4;
+    if (hex_c >= '0' && hex_c <= '9') {
+      unicode += (hex_c - '0');
+    } else if (hex_c >= 'A' && hex_c <= 'F') {
+      unicode += ((hex_c - 'A') + 10);
+    } else if (hex_c >= 'a' && hex_c <= 'f') {
+      unicode += ((hex_c - 'a') + 10);
+    } else {
+      lex_report_err(lex, "Invalid unicode escape: digit %i (%lc):"
+                          "hexadecimal digit", i + 1, hex_c);
+      return TSCFG_ERR_SYNTAX;
+    }
+  }
+
+  lex_eat(lex, UNICODE_ESCAPE_LEN);
+  *c = unicode;
   return TSCFG_OK;
 }
 
@@ -1047,8 +1095,8 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
       break;
     }
 
-    // Append first character and advance
-    rc = lex_append_char(lex, &sb, true);
+    // Append first rotcharacter and advance
+    rc = lex_copy_char(lex, &sb, true);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
   }
@@ -1253,4 +1301,18 @@ static void strbuf_finalize(tscfg_strbuf *sb) {
 
 static void strbuf_free(tscfg_strbuf *sb) {
   free(sb->str);
+}
+
+static tscfg_rc strbuf_append_utf8(tscfg_strbuf *sb, tscfg_char_t c,
+                              bool aggressive) {
+  size_t enc_len = 0; // TODO: utf8 encoded length function
+  size_t min_size = sb->len + enc_len;
+  tscfg_rc rc = strbuf_expand(sb, min_size, aggressive);
+  TSCFG_CHECK(rc);
+
+  char *pos = &sb->str[sb->len];
+  // TODO: append bytes to resized buffer
+
+  sb->len += enc_len;
+  return TSCFG_ERR_UNIMPL;
 }

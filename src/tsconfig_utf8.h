@@ -1,5 +1,7 @@
 /*
- * UTF-8 Functions
+ * UTF-8 Functions.
+ *
+ * Validation rules based on RFC-3629
  *
  * Author: Tim Armstrong
  * tim.g.armstrong@gmail.com
@@ -19,9 +21,12 @@
  */
 typedef uint32_t tscfg_char_t;
 
+// Max bytes per encoded UTF-8 character
+#define UTF8_MAX_BYTES 4
+
 /*
  * Decode first byte of UTF-8 character.
- * This will detect any overlong encodings TODO: confirm
+ * This will detect any overlong encodings
  * accum: accumulator final value, store value of first byte
  * len: number of bytes in full encoding (including this one)
  * return: TSCFG_OK if valid initial byte of UTF-8, TSCFG_ERR_INVALID
@@ -66,12 +71,6 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
   } else if (b <= 0xF7) { // Binary 1111 0xxx
     *len = 4;
     *accum = 0x07 & b;
-  } else if (b <= 0xFB) { // Binary 1111 10xx
-    *len = 5;
-    *accum = 0x03 & b;
-  } else if (b <= 0xFD) { // Binary 1111 110x
-    *len = 6;
-    *accum = 0x01 & b;
   } else {
     // Invalid first byte
     return TSCFG_ERR_INVALID;
@@ -92,7 +91,6 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
 
 static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
                                         tscfg_char_t *accum) {
-
   for (size_t i = 0; i < len; i++) {
     unsigned char b = s[i];
     // Must follow pattern 10xx xxxx
@@ -109,6 +107,53 @@ static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
   }
 
   return TSCFG_OK;
+}
+
+/*
+ * Return encoded length, or 0 if invalid
+ */
+static inline uint8_t tscfg_encoded_len(tscfg_char_t c) {
+  if (c <= 0x07F) {
+    return 1;
+  } else if (c <= 0x7FF) {
+    return 2;
+  } else if (c <= 0xFFFF) {
+    return 3;
+  } else if (c <= 0x10FFFF) {
+    return 4;
+  } else {
+    // Out of range
+    return 0;
+  }
+}
+
+/*
+ * Assume that buffer is large enough
+ * (either >= 4 or >= tscfg_encoded_len result)
+ */
+static inline void tscfg_encode(tscfg_char_t c, unsigned char *buf) {
+  if (c <= 0x07F) {
+    buf[0] = (unsigned char)c;
+  } else if (c <= 0x7FF) {
+    buf[1] = (unsigned char)(0x80 | (0x3F & c));
+    c >>= 6;
+
+    buf[0] = (unsigned char)(0xC0 | (0x1F & c));
+  } else if (c <= 0xFFFF) {
+    for (int i = 2; i >= 1; i--) {
+      buf[i] = (unsigned char)(0x80 | (0x3F & c));
+      c >>= 6;
+    }
+    buf[0] = (unsigned char)(0xE0 | (0x0F & c));
+  } else if (c <= 0x10FFFF) {
+    for (int i = 3; i >= 1; i--) {
+      buf[i] = (unsigned char)(0x80 | (0x3F & c));
+      c >>= 6;
+    }
+    buf[0] = (unsigned char)(0xF0 | (0x07 & c));
+  } else {
+    // Out of range, silently fail...
+  }
 }
 
 #endif // __TSCONFIG_UTF8_H

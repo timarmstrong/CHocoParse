@@ -19,9 +19,6 @@
 // Default amount to buffer when searching ahead
 #define LEX_PEEK_BATCH_SIZE 32
 
-// Max bytes per encoded UTF-8 character
-#define UTF8_MAX_BYTES 6
-
 // Unicode escape code length (hex digits)
 #define UNICODE_ESCAPE_LEN 4
 
@@ -1311,13 +1308,16 @@ static void strbuf_free(tscfg_strbuf *sb) {
 
 static tscfg_rc strbuf_append_utf8(tscfg_strbuf *sb, tscfg_char_t c,
                               bool aggressive) {
-  size_t enc_len = 0; // TODO: utf8 encoded length function
+  uint8_t enc_len = tscfg_encoded_len(c);
+  assert(enc_len >= 1);
+
   size_t min_size = sb->len + enc_len;
   tscfg_rc rc = strbuf_expand(sb, min_size, aggressive);
   TSCFG_CHECK(rc);
 
-  char *pos = &sb->str[sb->len];
-  // TODO: append bytes to resized buffer
+  unsigned char *pos = (unsigned char*)&sb->str[sb->len];
+  // Append bytes to resized buffer
+  tscfg_encode(c, pos);
 
   sb->len += enc_len;
   return TSCFG_ERR_UNIMPL;

@@ -44,8 +44,8 @@ static tscfg_rc parse_hocon_arr_body(ts_parse_state *state);
 
 static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
-                   bool *saw_comment, tscfg_tok **toks, int *tok_count,
-                   tscfg_tok_tag *next_tag);
+                   bool *saw_comment, tscfg_tok **ws_toks, int *ws_tok_count,
+                   tscfg_tok *next_tok);
 
 static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count);
 static tscfg_rc value(ts_parse_state *state);
@@ -310,12 +310,12 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
  *
  * saw_sep: if saw item separator (newline or comma)
  * saw_comment: if there was a comment token
- * toks/tok_count: array of tokens consumed
- * next_tag: tag of next token
+ * ws_toks/ws_tok_count: array of whitespace/separator tokens consumed
+ * next_tok: next token
  */
 static tscfg_rc concat_or_item_sep(ts_parse_state *state, bool *saw_sep,
-                   bool *saw_comment, tscfg_tok **toks, int *tok_count,
-                   tscfg_tok_tag *next_tag) {
+                   bool *saw_comment, tscfg_tok **ws_toks, int *ws_tok_count,
+                   tscfg_tok *next_tok) {
   // TODO
   return TSCFG_ERR_UNIMPL;
 }
@@ -339,60 +339,87 @@ static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
  * return TSCFG_ERR_SYNTAX.
  */
 static tscfg_rc value(ts_parse_state *state) {
-    tscfg_rc rc;
-    
-    tscfg_tok_tag tag;
-    rc = peek_tag_skip_ws(&state, &tag);
-    TSCFG_CHECK(rc);
+  tscfg_rc rc;
 
-    switch (tag) {
+  tscfg_tok tok;
+  int got;
+  rc = peek_tok_skip_ws(state, &tok, 1, &got);
+  TSCFG_CHECK(rc);
+
+  // Whether to expect another value
+  bool another_val = true;
+
+  if (got == 0 ||
+      tok.tag == TSCFG_TOK_CLOSE_BRACE ||
+      tok.tag == TSCFG_TOK_EOF) {
+    // Handle valid but no element cases
+    another_val = false;
+  }
+
+  // Loop until end of value
+  while (another_val) {
+    // Check for value element
+    switch (tok.tag) {
       case TSCFG_TOK_OPEN_BRACE:
+        state->reader.obj_start(state->reader_state);
+        state->reader.obj_end(state->reader_state);
         // TODO: object
         return TSCFG_ERR_UNIMPL;
-      
+
       case TSCFG_TOK_OPEN_SQUARE:
+        state->reader.arr_start(state->reader_state);
+        state->reader.arr_end(state->reader_state);
         // TODO: array
         return TSCFG_ERR_UNIMPL;
-    
+
+      case TSCFG_TOK_TRUE:
+      case TSCFG_TOK_FALSE:
+      case TSCFG_TOK_NULL:
+      case TSCFG_TOK_NUMBER:
+      case TSCFG_TOK_UNQUOTED:
+      case TSCFG_TOK_STRING:
+      case TSCFG_TOK_VAR:
+        // Plain tokens with or without string
+        state->reader.token(state->reader_state, &tok);
+        pop_toks(state, 1);
+        break;
       default:
         // Attempt to parse value concatenation
-    }
-    
-    // Loop until end of value
-    while (true) {
-
-      // TODO: this logic needs revisiting
-      // Separator: comma or newline
-      bool sep = false, comment = false;
-      tscfg_tok *toks;
-      tscfg_tok_tag next_tag;
-      int tok_count;
-      rc = concat_or_item_sep(state, &sep, &comment, &toks, &tok_count,
-                              &next_tag);
-      TSCFG_CHECK(rc);
-
-      if (sep) {
-        // Ready for next item
-        free_toks(toks, tok_count);
-        break;
-      } else if (next_tag == TSCFG_TOK_CLOSE_BRACE ||
-                 next_tag == TSCFG_TOK_EOF) {
-        free_toks(toks, tok_count);
-        break;
-      } else {
-        // Interpret as concatenation with next token
-        if (comment) {
-          // TODO: I think comments are invalid here
-          free_toks(toks, tok_count);
-          tscfg_report_err("Comments not allowed between tokens here");
-          return TSCFG_ERR_SYNTAX;
-        }
-
-        // TODO: implement concat
         return TSCFG_ERR_UNIMPL;
-      }
     }
-  return TSCFG_ERR_UNIMPL;
+
+    // Check for separator: comma or newline
+    bool sep = false, comment = false;
+    // Need to track whitespace tokens in case they're part of
+    // concatenation.
+    // TODO: need to conditionally append below
+    tscfg_tok *ws_toks;
+    int ws_tok_count;
+
+    rc = concat_or_item_sep(state, &sep, &comment, &ws_toks,
+                            &ws_tok_count, &tok);
+    TSCFG_CHECK(rc);
+
+    if (sep) {
+      // Ready for next item
+      free_toks(ws_toks, ws_tok_count);
+      another_val = false;
+    } else if (tok.tag == TSCFG_TOK_CLOSE_BRACE ||
+               tok.tag == TSCFG_TOK_EOF) {
+      free_toks(ws_toks, ws_tok_count);
+      another_val = false;
+    } else if (comment) {
+      // TODO: I think comments are invalid in value concatenation
+      free_toks(ws_toks, ws_tok_count);
+      tscfg_report_err("Comments not allowed between tokens here");
+      return TSCFG_ERR_SYNTAX;
+    } else {
+      // Next tok should be part of value
+      another_val = true;
+    }
+  }
+
+  return TSCFG_OK;
 }
 
 static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,

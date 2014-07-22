@@ -59,7 +59,7 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
 static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag);
 
-static void free_toks(tscfg_tok *toks, int count);
+static void free_toks(tscfg_tok *toks, int count, bool free_array);
 static void pop_toks(ts_parse_state *state, int count);
 static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
@@ -390,9 +390,7 @@ static tscfg_rc value(ts_parse_state *state) {
 
     // Check for separator: comma or newline
     bool sep = false, comment = false;
-    // Need to track whitespace tokens in case they're part of
-    // concatenation.
-    // TODO: need to conditionally append below
+    // Need to track whitespace tokens in case of concatenation.
     tscfg_tok *ws_toks;
     int ws_tok_count;
 
@@ -402,20 +400,27 @@ static tscfg_rc value(ts_parse_state *state) {
 
     if (sep) {
       // Ready for next item
-      free_toks(ws_toks, ws_tok_count);
+      free_toks(ws_toks, ws_tok_count, true);
       another_val = false;
     } else if (tok.tag == TSCFG_TOK_CLOSE_BRACE ||
                tok.tag == TSCFG_TOK_EOF) {
-      free_toks(ws_toks, ws_tok_count);
+      free_toks(ws_toks, ws_tok_count, true);
       another_val = false;
     } else if (comment) {
       // TODO: I think comments are invalid in value concatenation
-      free_toks(ws_toks, ws_tok_count);
+      free_toks(ws_toks, ws_tok_count, true);
       tscfg_report_err("Comments not allowed between tokens here");
       return TSCFG_ERR_SYNTAX;
     } else {
       // Next tok should be part of value
       another_val = true;
+
+      // All whitespace tokens before next value part are concatenated
+      for (int i = 0; i < ws_tok_count; i++) {
+        state->reader.token(state->reader_state, &ws_toks[i]);
+      }
+      free(ws_toks); // Free array, but not strings that were
+                     // passed to reader
     }
   }
 
@@ -558,7 +563,7 @@ static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag){
 /*
  * Free strings of any tokens.
  */
-static void free_toks(tscfg_tok *toks, int count) {
+static void free_toks(tscfg_tok *toks, int count, bool free_array) {
   for (int i = 0; i < count; i++) {
     tscfg_tok *tok = &toks[i];
     if (tok->str != NULL) {
@@ -579,7 +584,7 @@ static void pop_toks(ts_parse_state *state, int count) {
   assert(count <= state->ntoks);
 
   // Cleanup memory first
-  free_toks(state->toks, count);
+  free_toks(state->toks, count, false);
 
   memmove(&state->toks[0], &state->toks[count], (size_t)(state->ntoks - count));
   state->ntoks -= count;

@@ -21,6 +21,7 @@ typedef uint32_t tscfg_char_t;
 
 /*
  * Decode first byte of UTF-8 character.
+ * This will detect any overlong encodings TODO: confirm
  * accum: accumulator final value, store value of first byte
  * len: number of bytes in full encoding (including this one)
  * return: TSCFG_OK if valid initial byte of UTF-8, TSCFG_ERR_INVALID
@@ -44,8 +45,8 @@ static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
 static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
                                          tscfg_char_t *accum) {
   if (b <= 0x7F)  { // Binary 0xxx xxxx
-    *accum = 0x7F & b;
     *len = 1;
+    *accum = 0x7F & b;
     return TSCFG_OK;
   } else if (b <= 0xC1) {
     /*
@@ -54,39 +55,29 @@ static inline tscfg_rc tscfg_decode_byte1(unsigned char b, size_t *len,
      * i.e. binary 1100 000x.
      */
     return TSCFG_ERR_INVALID;
-  } else if (b <= 0xDF) { // Binary 110x xxxx
-    unsigned char val = 0x1F & b;
-    if (val <= 0x1) {
-      return TSCFG_ERR_INVALID;
-    }
-
+  } else if (b <= 0xDF) { // Binary 110x xxxx, except 1100 000x
     *len = 2;
-    *accum = val;
+    *accum = 0x1F & b;
+    // All overlong 2-byte decodings already detected
     return TSCFG_OK;
   } else if (b <= 0xEF) { // Binary 1110 xxxx
-    *accum = 0x0F & b;
     *len = 3;
-    return TSCFG_OK;
+    *accum = 0x0F & b;
   } else if (b <= 0xF7) { // Binary 1111 0xxx
-    *accum = 0x07 & b;
     *len = 4;
-    return TSCFG_OK;
+    *accum = 0x07 & b;
   } else if (b <= 0xFB) { // Binary 1111 10xx
-    *accum = 0x03 & b;
     *len = 5;
-    return TSCFG_OK;
+    *accum = 0x03 & b;
   } else if (b <= 0xFD) { // Binary 1111 110x
-    *accum = 0x01 & b;
     *len = 6;
-    return TSCFG_OK;
+    *accum = 0x01 & b;
   } else {
+    // Invalid first byte
     return TSCFG_ERR_INVALID;
   }
-}
 
-static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
-                                        tscfg_char_t *accum) {
-  if (*accum == 0) {
+  if (*accum == 0x0) {
     /*
      * Detect overlong encoding.
      * This handles all cases of overlong characters where it was extended
@@ -96,6 +87,11 @@ static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
      */
     return TSCFG_ERR_INVALID;
   }
+  return TSCFG_OK;
+}
+
+static inline tscfg_rc tscfg_decode_rest(const unsigned char *s, size_t len,
+                                        tscfg_char_t *accum) {
 
   for (size_t i = 0; i < len; i++) {
     unsigned char b = s[i];

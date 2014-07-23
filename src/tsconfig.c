@@ -68,6 +68,8 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
 static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag);
 
+static tscfg_rc expand_toks(tok_array *toks, int min_size);
+static tscfg_rc append_toks(tok_array *dst, tok_array *src);
 static void free_toks(tok_array *toks, bool free_array);
 static void pop_toks(ts_parse_state *state, int count);
 static char *pop_tok_str(ts_parse_state *state, size_t *len);
@@ -322,8 +324,6 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
 static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
                    bool *comment, tok_array *ws_toks) {
   tscfg_rc rc;
-  int toks = 0;
-
   *newline = false;
   *comment = false;
 
@@ -350,17 +350,17 @@ static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
       break;
     }
 
-    // TODO: resize array
-    // TODO: add token
-
-    toks++;
+    if (ws_toks->len == ws_toks->size) {
+      rc = expand_toks(ws_toks, ws_toks->len + 1);
+      TSCFG_CHECK_GOTO(rc, cleanup);
+    }
+    
+    ws_toks->toks[ws_toks->len++] = tok;
   }
 
-  rc = TSCFG_ERR_UNIMPL; // TODO
+  rc = TSCFG_OK;
 cleanup:
-  if (rc != TSCFG_OK) {
-    free_toks(ws_toks, true);
-  }
+  free_toks(ws_toks, true);
   return rc;
 }
 
@@ -372,6 +372,8 @@ cleanup:
  */
 static tscfg_rc key(ts_parse_state *state, tok_array *toks) {
   tscfg_rc rc;
+
+  *toks = EMPTY_TOK_ARRAY;
 
   rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
@@ -410,10 +412,9 @@ static tscfg_rc key(ts_parse_state *state, tok_array *toks) {
           goto cleanup;
         }
 
-        // TODO: append whitespace
-        ws_toks.len = 0; // Reset array
+        rc = append_toks(toks, &ws_toks);
+        TSCFG_CHECK_GOTO(rc, cleanup);
 
-        // TODO: append tok
         pop_toks(state, 1);
         break;
       default:
@@ -615,15 +616,9 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
   tscfg_rc rc;
 
   // Resize token buffer to be large enough
-  if (count > state->toks.size) {
-    // TODO: factor out into resize function
-    void *tmp = realloc(state->toks.toks,
-            sizeof(state->toks.toks[0]) * (size_t)count);
-    TSCFG_CHECK_MALLOC(tmp);
-
-    state->toks.size = count;
-  }
-
+  rc = expand_toks(&state->toks, count);
+  TSCFG_CHECK(rc);
+  
   while (state->toks.len < count) {
     if (state->toks.len > 0 &&
         state->toks.toks[state->toks.len - 1].tag == TSCFG_TOK_EOF) {
@@ -677,6 +672,30 @@ static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag){
   }
 
   return TSCFG_OK;
+}
+
+static tscfg_rc expand_toks(tok_array *toks, int min_size) {
+  if (min_size > toks->size) {
+    int new_size = toks->size * 2;
+    if (new_size < min_size) {
+      new_size = min_size;
+    } 
+
+    void *tmp = realloc(toks->toks, sizeof(toks->toks[0]) * (size_t)new_size);
+    TSCFG_CHECK_MALLOC(tmp);
+
+    toks->size = new_size;
+  }
+
+  return TSCFG_OK;
+}
+
+/*
+ * Append tokens from src to dst and clear src
+ */
+static tscfg_rc append_toks(tok_array *dst, tok_array *src) {
+  // TODO: append
+  return TSCFG_ERR_UNIMPL;
 }
 
 /*

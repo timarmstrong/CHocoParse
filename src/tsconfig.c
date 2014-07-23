@@ -22,14 +22,22 @@
 #include "tsconfig_tree_reader.h"
 
 typedef struct {
+  tscfg_tok *toks;
+  int size;
+  int len;
+} tok_array;
+
+static const tok_array EMPTY_TOK_ARRAY = {
+  .toks = NULL, .size = 0, .len = 0
+};
+
+typedef struct {
   tscfg_reader reader;
   void *reader_state;
 
   tscfg_lex_state lex_state;
 
-  tscfg_tok *toks;
-  int toks_size;
-  int ntoks;
+  tok_array toks;
 } ts_parse_state;
 
 static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
@@ -44,13 +52,12 @@ static tscfg_rc parse_hocon_arr_body(ts_parse_state *state);
 
 static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
-                   bool *comment, tscfg_tok **ws_toks, int *ws_tok_count);
+                   bool *comment, tok_array *ws_toks);
 
-static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count);
+static tscfg_rc key(ts_parse_state *state, tok_array *toks);
 static tscfg_rc value(ts_parse_state *state);
 
-static tscfg_rc emit_toks(ts_parse_state *state, tscfg_tok **ws_toks,
-                          int *ws_tok_count);
+static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks);
 
 static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
@@ -61,7 +68,7 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
 static tscfg_rc peek_tag(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag);
 
-static void free_toks(tscfg_tok *toks, int count, bool free_array);
+static void free_toks(tok_array *toks, bool free_array);
 static void pop_toks(ts_parse_state *state, int count);
 static char *pop_tok_str(ts_parse_state *state, size_t *len);
 
@@ -192,10 +199,8 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
     }
 
     // TODO: check for include file and merge object
-
-    tscfg_tok *key_toks;
-    int nkey_toks;
-    rc = key(state, &key_toks, &nkey_toks);
+    tok_array key_toks;
+    rc = key(state, &key_toks);
     TSCFG_CHECK(rc);
 
     // Separator before value
@@ -204,7 +209,8 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
     TSCFG_CHECK(rc);
 
     ok = state->reader.key_val_start(state->reader_state,
-                                    key_toks, nkey_toks, sep);
+                      key_toks.toks, key_toks.len, sep);
+    free(key_toks.toks);
     TSCFG_COND(ok, TSCFG_ERR_READER);
 
     // Parse value
@@ -310,16 +316,18 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
  *
  * newline: whether a newline was consumed
  * comment: whether a comment was consumed
- * ws_toks/ws_tok_count: array of whitespace/separator tokens consumed
+ * tok_array: array of whitespace/separator tokens consumed
  * next_tok: next token
  */
 static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
-                   bool *comment, tscfg_tok **ws_toks, int *ws_tok_count) {
+                   bool *comment, tok_array *ws_toks) {
   tscfg_rc rc;
   int toks = 0;
 
   *newline = false;
   *comment = false;
+
+  *ws_toks = EMPTY_TOK_ARRAY;
 
   while (true) {
     tscfg_tok tok;
@@ -351,7 +359,7 @@ static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
   rc = TSCFG_ERR_UNIMPL; // TODO
 cleanup:
   if (rc != TSCFG_OK) {
-    // TODO: free tokens?
+    free_toks(ws_toks, true);
   }
   return rc;
 }
@@ -362,18 +370,15 @@ cleanup:
  * May return 0 tokens.
  * Will consume key and leading/trailing whitespace
  */
-static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
+static tscfg_rc key(ts_parse_state *state, tok_array *toks) {
   tscfg_rc rc;
-
-  // TODO: alloc keys array
 
   rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
 
   /* Need to track whitespace tokens in case of concatenation.
    * This array tracks whitespace tokens preceding current token. */
-  tscfg_tok *ws_toks = NULL;
-  int ws_tok_count = 0;
+  tok_array ws_toks = EMPTY_TOK_ARRAY;
 
   bool newline = false, comment = false;
 
@@ -405,13 +410,9 @@ static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
           goto cleanup;
         }
 
-        if (ws_toks != NULL) {
-          // TODO: append whitespace
-          // TODO: check for comment?
-          free(ws_toks);
-          ws_toks = NULL;
-          ws_tok_count = 0;
-        }
+        // TODO: append whitespace
+        ws_toks.len = 0; // Reset array
+
         // TODO: append tok
         pop_toks(state, 1);
         break;
@@ -421,16 +422,14 @@ static tscfg_rc key(ts_parse_state *state, tscfg_tok **toks, int *tok_count) {
         goto cleanup;
     }
 
-    rc = accum_whitespace(state, &newline, &comment, &ws_toks, &ws_tok_count);
+    rc = accum_whitespace(state, &newline, &comment, &ws_toks);
     TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
   rc = TSCFG_OK;
 
 cleanup:
-  if (ws_toks != NULL) {
-    free_toks(ws_toks, ws_tok_count, true);
-  }
+  free_toks(&ws_toks, true);
   return rc;
 }
 
@@ -449,8 +448,7 @@ static tscfg_rc value(ts_parse_state *state) {
 
   /* Need to track whitespace tokens in case of concatenation.
    * This array tracks whitespace tokens preceding current token. */
-  tscfg_tok *ws_toks = NULL;
-  int ws_tok_count = 0;
+  tok_array ws_toks = EMPTY_TOK_ARRAY;
 
   bool newline = false, comment = false;
 
@@ -469,7 +467,7 @@ static tscfg_rc value(ts_parse_state *state) {
     // TODO: this should be checked before we process value
     if (comment) {
       // TODO: I think comments are invalid in value concatenation
-      free_toks(ws_toks, ws_tok_count, true);
+      free_toks(&ws_toks, true);
       tscfg_report_err("Comments not allowed between tokens here");
       return TSCFG_ERR_SYNTAX;
     }
@@ -477,7 +475,7 @@ static tscfg_rc value(ts_parse_state *state) {
     // Check for value element
     switch (tok.tag) {
       case TSCFG_TOK_OPEN_BRACE:
-        rc = emit_toks(state, &ws_toks, &ws_tok_count);
+        rc = emit_toks(state, &ws_toks);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
         // TODO: return val of this and other calls
@@ -487,7 +485,7 @@ static tscfg_rc value(ts_parse_state *state) {
         return TSCFG_ERR_UNIMPL;
 
       case TSCFG_TOK_OPEN_SQUARE:
-        rc = emit_toks(state, &ws_toks, &ws_tok_count);
+        rc = emit_toks(state, &ws_toks);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
         state->reader.arr_start(state->reader_state);
@@ -502,7 +500,7 @@ static tscfg_rc value(ts_parse_state *state) {
       case TSCFG_TOK_UNQUOTED:
       case TSCFG_TOK_STRING:
       case TSCFG_TOK_VAR:
-        rc = emit_toks(state, &ws_toks, &ws_tok_count);
+        rc = emit_toks(state, &ws_toks);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
         state->reader.token(state->reader_state, &tok);
@@ -516,8 +514,7 @@ static tscfg_rc value(ts_parse_state *state) {
         return TSCFG_ERR_UNIMPL;
     }
 
-    rc = accum_whitespace(state, &newline, &comment, &ws_toks,
-                            &ws_tok_count);
+    rc = accum_whitespace(state, &newline, &comment, &ws_toks);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     tscfg_tok_tag next_tag;
@@ -537,17 +534,14 @@ static tscfg_rc value(ts_parse_state *state) {
   rc = TSCFG_OK;
 
 cleanup:
-  if (ws_toks != NULL) {
-    free_toks(ws_toks, ws_tok_count, true);
-  }
+  free_toks(&ws_toks, true);
   return rc;
 }
 
 /*
  * Emit tokens and free memory
  */
-static tscfg_rc emit_toks(ts_parse_state *state, tscfg_tok **ws_toks,
-                          int *ws_tok_count) {
+static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks) {
   //TODO: implement
   return TSCFG_ERR_UNIMPL;
 }
@@ -571,10 +565,11 @@ static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
   rc = tscfg_lex_init(&state->lex_state, in);
   TSCFG_CHECK(rc);
 
-  state->toks_size = 1;
-  state->toks = malloc(sizeof(state->toks[0]) * (size_t)state->toks_size);
-  TSCFG_CHECK_MALLOC(state->toks);
-  state->ntoks = 0;
+  state->toks.size = 1;
+  state->toks.toks = malloc(sizeof(state->toks.toks[0]) *
+                            (size_t)state->toks.size);
+  TSCFG_CHECK_MALLOC(state->toks.toks);
+  state->toks.len = 0;
 
   return TSCFG_OK;
 }
@@ -583,10 +578,7 @@ static void ts_parse_state_finalize(ts_parse_state *state) {
   tscfg_lex_finalize(&state->lex_state);
 
   // Free memory
-  free(state->toks);
-  state->toks = NULL;
-  state->toks_size = 0;
-  state->ntoks = 0;
+  free_toks(&state->toks, true);
 }
 
 static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
@@ -623,31 +615,33 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
   tscfg_rc rc;
 
   // Resize token buffer to be large enough
-  if (count > state->toks_size) {
-    void *tmp = realloc(state->toks,
-            sizeof(state->toks[0]) * (size_t)count);
+  if (count > state->toks.size) {
+    // TODO: factor out into resize function
+    void *tmp = realloc(state->toks.toks,
+            sizeof(state->toks.toks[0]) * (size_t)count);
     TSCFG_CHECK_MALLOC(tmp);
 
-    state->toks_size = count;
+    state->toks.size = count;
   }
 
-  while (state->ntoks < count) {
-    if (state->ntoks > 0 &&
-        state->toks[state->ntoks - 1].tag == TSCFG_TOK_EOF) {
+  while (state->toks.len < count) {
+    if (state->toks.len > 0 &&
+        state->toks.toks[state->toks.len - 1].tag == TSCFG_TOK_EOF) {
       // Already hit end of file
       break;
     }
 
     tscfg_lex_opts opts = { .include_ws_str = include_ws,
                             .include_comm_str = false };
-    rc = tscfg_read_tok(&state->lex_state, &state->toks[state->ntoks], opts);
+    rc = tscfg_read_tok(&state->lex_state, 
+          &state->toks.toks[state->toks.len], opts);
     TSCFG_CHECK(rc);
 
-    state->ntoks++;
+    state->toks.len++;
   }
 
-  *got = state->ntoks < count ? state->ntoks : count;
-  memcpy(toks, state->toks, sizeof(toks[0]) * (size_t)*got);
+  *got = state->toks.len < count ? state->toks.len : count;
+  memcpy(toks, state->toks.toks, sizeof(toks[0]) * (size_t)*got);
   return TSCFG_OK;
 }
 
@@ -688,12 +682,15 @@ static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag){
 /*
  * Free strings of any tokens.
  */
-static void free_toks(tscfg_tok *toks, int count, bool free_array) {
-  for (int i = 0; i < count; i++) {
-    tscfg_tok *tok = &toks[i];
+static void free_toks(tok_array *toks, bool free_array) {
+  for (int i = 0; i < toks->len; i++) {
+    tscfg_tok *tok = &toks->toks[i];
     if (tok->str != NULL) {
       free(tok->str);
     }
+  }
+  if (free_array && toks->toks != NULL) {
+    free(toks->toks);
   }
 }
 
@@ -706,13 +703,15 @@ static void free_toks(tscfg_tok *toks, int count, bool free_array) {
  */
 static void pop_toks(ts_parse_state *state, int count) {
   assert(count >= 0);
-  assert(count <= state->ntoks);
+  assert(count <= state->toks.len);
 
   // Cleanup memory first
-  free_toks(state->toks, count, false);
+  // TODO
+  // free_toks(state->toks, count, false);
 
-  memmove(&state->toks[0], &state->toks[count], (size_t)(state->ntoks - count));
-  state->ntoks -= count;
+  memmove(&state->toks.toks[0], &state->toks.toks[count],
+          sizeof(state->toks.toks[0]) * (size_t)(state->toks.len - count));
+  state->toks.len -= count;
 }
 
 /*
@@ -754,8 +753,8 @@ static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline) {
  * Caller must ensure that there is at least one valid token.
  */
 static char *pop_tok_str(ts_parse_state *state, size_t *len) {
-  assert(state->ntoks >= 1);
-  char *str = tscfg_own_token(&state->toks[0], len);
+  assert(state->toks.len >= 1);
+  char *str = tscfg_own_token(&state->toks.toks[0], len);
 
   pop_toks(state, 1);
   return str;

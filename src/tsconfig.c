@@ -694,8 +694,16 @@ static tscfg_rc expand_toks(tok_array *toks, int min_size) {
  * Append tokens from src to dst and clear src
  */
 static tscfg_rc append_toks(tok_array *dst, tok_array *src) {
-  // TODO: append
-  return TSCFG_ERR_UNIMPL;
+  assert(dst != src);
+  tscfg_rc rc = expand_toks(dst, dst->len + src->len);
+  TSCFG_CHECK(rc);
+
+  memcpy(&dst->toks[dst->len], &src->toks[0],
+         sizeof(src->toks[0]) * (size_t)src->len);
+
+  dst->len += src->len;
+  src->len = 0;
+  return TSCFG_OK;
 }
 
 /*
@@ -725,8 +733,9 @@ static void pop_toks(ts_parse_state *state, int count) {
   assert(count <= state->toks.len);
 
   // Cleanup memory first
-  // TODO
-  // free_toks(state->toks, count, false);
+  for (int i = 0; i < count; i++) {
+    free(state->toks.toks[i].str);
+  }
 
   memmove(&state->toks.toks[0], &state->toks.toks[count],
           sizeof(state->toks.toks[0]) * (size_t)(state->toks.len - count));

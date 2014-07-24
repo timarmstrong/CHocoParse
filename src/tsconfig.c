@@ -21,6 +21,15 @@
 #include "tsconfig_lex.h"
 #include "tsconfig_tree_reader.h"
 
+/*
+  Whether an empty value is accepted, e.g.
+
+    ["", ,] would give a two element array of zero-length strings
+    { k = } is equivalent to { k = "" }
+
+ */
+#define ALLOW_EMPTY_VALUE true
+
 typedef struct {
   tscfg_tok *toks;
   int size;
@@ -57,7 +66,11 @@ static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
 static tscfg_rc key(ts_parse_state *state, tok_array *toks);
 static tscfg_rc value(ts_parse_state *state);
 
-static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks);
+static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks,
+                          bool check_no_comments);
+
+static tscfg_rc expect_tag(ts_parse_state *state, tscfg_tok_tag expected,
+                      const char *errmsg_start);
 
 static tscfg_rc peek_tok(ts_parse_state *state, tscfg_tok *toks,
                        int count, int *got);
@@ -301,11 +314,11 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
       }
       return TSCFG_OK;
     case TSCFG_TOK_EOF:
-      tscfg_report_err("End of input before value matching key");
+      ts_parse_report_err(state, "End of input before value matching key");
       return TSCFG_ERR_SYNTAX;
     default:
-      tscfg_report_err("Expected key/value separator or open brace, but "
-                       "got something else.");
+      ts_parse_report_err(state, "Expected key/value separator or open brace, "
+                       "but got something else.");
       return TSCFG_ERR_SYNTAX;
   }
 
@@ -354,7 +367,7 @@ static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
       rc = expand_toks(ws_toks, ws_toks->len + 1);
       TSCFG_CHECK_GOTO(rc, cleanup);
     }
-    
+
     ws_toks->toks[ws_toks->len++] = tok;
   }
 
@@ -443,6 +456,7 @@ cleanup:
  */
 static tscfg_rc value(ts_parse_state *state) {
   tscfg_rc rc;
+  bool ok;
 
   rc = skip_whitespace(state, NULL);
   TSCFG_CHECK(rc);
@@ -451,7 +465,8 @@ static tscfg_rc value(ts_parse_state *state) {
    * This array tracks whitespace tokens preceding current token. */
   tok_array ws_toks = EMPTY_TOK_ARRAY;
 
-  bool newline = false, comment = false;
+  bool first = true;
+  bool newline = false;
 
   // Loop until end of value
   while (true) {
@@ -464,36 +479,9 @@ static tscfg_rc value(ts_parse_state *state) {
       // No more elements possible
       break;
     }
-   
-    // TODO: this should be checked before we process value
-    if (comment) {
-      // TODO: I think comments are invalid in value concatenation
-      free_toks(&ws_toks, true);
-      tscfg_report_err("Comments not allowed between tokens here");
-      return TSCFG_ERR_SYNTAX;
-    }
 
     // Check for value element
     switch (tok.tag) {
-      case TSCFG_TOK_OPEN_BRACE:
-        rc = emit_toks(state, &ws_toks);
-        TSCFG_CHECK_GOTO(rc, cleanup);
-
-        // TODO: return val of this and other calls
-        state->reader.obj_start(state->reader_state);
-        state->reader.obj_end(state->reader_state);
-        // TODO: object
-        return TSCFG_ERR_UNIMPL;
-
-      case TSCFG_TOK_OPEN_SQUARE:
-        rc = emit_toks(state, &ws_toks);
-        TSCFG_CHECK_GOTO(rc, cleanup);
-
-        state->reader.arr_start(state->reader_state);
-        state->reader.arr_end(state->reader_state);
-        // TODO: array
-        return TSCFG_ERR_UNIMPL;
-
       case TSCFG_TOK_TRUE:
       case TSCFG_TOK_FALSE:
       case TSCFG_TOK_NULL:
@@ -501,20 +489,76 @@ static tscfg_rc value(ts_parse_state *state) {
       case TSCFG_TOK_UNQUOTED:
       case TSCFG_TOK_STRING:
       case TSCFG_TOK_VAR:
-        rc = emit_toks(state, &ws_toks);
+        rc = emit_toks(state, &ws_toks, true);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
-        state->reader.token(state->reader_state, &tok);
+        ok = state->reader.token(state->reader_state, &tok);
+        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
         pop_toks(state, 1);
         break;
+
+      case TSCFG_TOK_OPEN_BRACE:
+        rc = emit_toks(state, &ws_toks, true);
+        TSCFG_CHECK_GOTO(rc, cleanup);
+
+        pop_toks(state, 1);
+
+        ok = state->reader.obj_start(state->reader_state);
+        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
+
+        rc = parse_hocon_obj_body(state);
+        TSCFG_CHECK(rc);
+
+        ok = state->reader.obj_end(state->reader_state);
+        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
+
+        rc = expect_tag(state, TSCFG_TOK_CLOSE_BRACE,
+                        "Expected close brace");
+        TSCFG_CHECK_GOTO(rc, cleanup);
+
+        pop_toks(state, 1);
+        break;
+
+      case TSCFG_TOK_OPEN_SQUARE:
+        rc = emit_toks(state, &ws_toks, true);
+        TSCFG_CHECK_GOTO(rc, cleanup);
+
+        pop_toks(state, 1);
+
+        ok = state->reader.arr_start(state->reader_state);
+        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
+
+        rc = parse_hocon_arr_body(state);
+        TSCFG_CHECK(rc);
+
+        ok = state->reader.arr_end(state->reader_state);
+        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
+
+        rc = expect_tag(state, TSCFG_TOK_CLOSE_SQUARE,
+                        "Expected close square bracket");
+        TSCFG_CHECK_GOTO(rc, cleanup);
+
+        pop_toks(state, 1);
+        break;
+
       case TSCFG_TOK_COMMA:
-        // TODO: special warning on double separator
-        return TSCFG_ERR_SYNTAX;
+        assert(first); // Should only happen on first iteration
+        if (ALLOW_EMPTY_VALUE)  {
+          /* Don't emit anything, keep comma as next token*/
+          free_toks(&ws_toks, false);
+        } else {
+          ts_parse_report_err(state, "Empty values are not valid syntax");
+          rc = TSCFG_ERR_SYNTAX;
+          goto cleanup;
+        }
+
       default:
-        // Attempt to parse value concatenation
-        return TSCFG_ERR_UNIMPL;
+        // Token cannot be part of value, leave
+        rc = TSCFG_OK;
+        goto cleanup;
     }
 
+    bool comment;
     rc = accum_whitespace(state, &newline, &comment, &ws_toks);
     TSCFG_CHECK_GOTO(rc, cleanup);
 
@@ -530,6 +574,8 @@ static tscfg_rc value(ts_parse_state *state) {
       // Implicit separator: ready for next item
       break;
     }
+
+    first = false;
   }
 
   rc = TSCFG_OK;
@@ -540,11 +586,32 @@ cleanup:
 }
 
 /*
- * Emit tokens and free memory
+ * Emit tokens and clear them from array
+ *
+ * check_no_comments: if true, no comments allowed
  */
-static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks) {
-  //TODO: implement
-  return TSCFG_ERR_UNIMPL;
+static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks,
+                          bool check_no_comments) {
+  for (int i = 0; i < toks->len; i++) {
+    tscfg_tok *tok = &toks->toks[i];
+
+    if (check_no_comments && tok->tag == TSCFG_TOK_COMMENT) {
+      tscfg_report_err("Comments not allowed between tokens here");
+      return TSCFG_ERR_SYNTAX;
+    }
+
+    bool ok = state->reader.token(state->reader_state, tok);
+
+    // We handed over token, so invalidate
+    tok->tag = TSCFG_TOK_INVALID;
+    tok->str = NULL;
+    tok->len = 0;
+
+    TSCFG_COND(ok, TSCFG_ERR_READER);
+  }
+
+  toks->len = 0; // No longer own tokens
+  return TSCFG_OK;
 }
 
 static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
@@ -590,6 +657,23 @@ static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
   va_end(args);
 }
 
+static tscfg_rc expect_tag(ts_parse_state *state, tscfg_tok_tag expected,
+                      const char *errmsg_start) {
+  tscfg_rc rc;
+  tscfg_tok_tag tag;
+
+  rc = peek_tag(state, &tag);
+  TSCFG_CHECK(rc);
+
+  if (tag != expected) {
+    // TODO: report actual tag
+    ts_parse_report_err(state, "%s", errmsg_start);
+    return TSCFG_ERR_SYNTAX;
+  }
+
+  return TSCFG_OK;
+}
+
 /*
  * Peek ahead into tokens without removing
  * count: number of tokens to look ahead
@@ -618,7 +702,7 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
   // Resize token buffer to be large enough
   rc = expand_toks(&state->toks, count);
   TSCFG_CHECK(rc);
-  
+
   while (state->toks.len < count) {
     if (state->toks.len > 0 &&
         state->toks.toks[state->toks.len - 1].tag == TSCFG_TOK_EOF) {
@@ -628,7 +712,7 @@ static tscfg_rc peek_tok_impl(ts_parse_state *state, tscfg_tok *toks,
 
     tscfg_lex_opts opts = { .include_ws_str = include_ws,
                             .include_comm_str = false };
-    rc = tscfg_read_tok(&state->lex_state, 
+    rc = tscfg_read_tok(&state->lex_state,
           &state->toks.toks[state->toks.len], opts);
     TSCFG_CHECK(rc);
 
@@ -679,7 +763,7 @@ static tscfg_rc expand_toks(tok_array *toks, int min_size) {
     int new_size = toks->size * 2;
     if (new_size < min_size) {
       new_size = min_size;
-    } 
+    }
 
     void *tmp = realloc(toks->toks, sizeof(toks->toks[0]) * (size_t)new_size);
     TSCFG_CHECK_MALLOC(tmp);
@@ -716,8 +800,12 @@ static void free_toks(tok_array *toks, bool free_array) {
       free(tok->str);
     }
   }
+  toks->len = 0;
+
   if (free_array && toks->toks != NULL) {
     free(toks->toks);
+    toks->toks = NULL;
+    toks->size = 0;
   }
 }
 

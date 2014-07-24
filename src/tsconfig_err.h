@@ -32,4 +32,7 @@ void tscfg_report_err_v(const char *fmt, va_list args);
 #define TSCFG_COND(cond, err_rc) { \
   if (!(cond)) return (err_rc); }
 
+#define TSCFG_COND_GOTO(cond, rc_var, rc_val, label) { \
+  if (!(cond)) { (rc_var) = (rc_val); goto label; } }
+
 #endif // __TSCONFIG_ERR_H

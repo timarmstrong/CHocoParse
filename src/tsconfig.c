@@ -126,6 +126,7 @@ tscfg_rc tsconfig_parse(tsconfig_input in, tscfg_fmt fmt,
 static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
     void *reader_state) {
   ts_parse_state state;
+
   tscfg_rc rc = TSCFG_ERR_UNKNOWN;
 
   rc = ts_parse_state_init(&state, in, reader, reader_state);
@@ -636,11 +637,7 @@ static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
   rc = tscfg_lex_init(&state->lex_state, in);
   TSCFG_CHECK(rc);
 
-  state->toks.size = 1;
-  state->toks.toks = malloc(sizeof(state->toks.toks[0]) *
-                            (size_t)state->toks.size);
-  TSCFG_CHECK_MALLOC(state->toks.toks);
-  state->toks.len = 0;
+  state->toks = EMPTY_TOK_ARRAY;
 
   return TSCFG_OK;
 }

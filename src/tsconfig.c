@@ -88,8 +88,9 @@ static tscfg_rc peek_tag_skip_ws(ts_parse_state *state, tscfg_tok_tag *tag);
 static tscfg_rc expand_toks(tok_array *toks, int min_size);
 static tscfg_rc append_toks(tok_array *dst, tok_array *src);
 static void free_toks(tok_array *toks, bool free_array);
-static void pop_toks(ts_parse_state *state, int count);
-static char *pop_tok_str(ts_parse_state *state, size_t *len);
+static void pop_toks(ts_parse_state *state, int count, bool free_toks);
+static tscfg_rc pop_append_toks(ts_parse_state *state, tok_array *toks,
+                                int count);
 
 static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline);
 
@@ -139,7 +140,7 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
 
   if (open_tag == TSCFG_TOK_OPEN_BRACE ||
       open_tag == TSCFG_TOK_OPEN_SQUARE) {
-    pop_toks(&state, 1);
+    pop_toks(&state, 1, true);
   } else {
     // No initial punctuation
     open_tag = TSCFG_TOK_INVALID;
@@ -166,7 +167,7 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
           close_tag == TSCFG_TOK_CLOSE_BRACE) ||
         (open_tag == TSCFG_TOK_OPEN_SQUARE &&
           close_tag == TSCFG_TOK_CLOSE_SQUARE)) {
-      pop_toks(&state, 1);
+      pop_toks(&state, 1, true);
     } else {
       const char *msg = (open_tag == TSCFG_TOK_OPEN_BRACE) ?
               "Expected closing brace to match initial open" :
@@ -307,7 +308,7 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
     case TSCFG_TOK_EQUAL:
     case TSCFG_TOK_COLON:
     case TSCFG_TOK_PLUSEQUAL:
-      pop_toks(state, 1);
+      pop_toks(state, 1, true);
       if (tag != NULL) {
         *tag = maybe_tag;
       }
@@ -367,18 +368,15 @@ static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
       break;
     }
 
-    if (ws_toks->len == ws_toks->size) {
-      rc = expand_toks(ws_toks, ws_toks->len + 1);
-      TSCFG_CHECK_GOTO(rc, cleanup);
-    }
-
-    ws_toks->toks[ws_toks->len++] = tok;
-    pop_toks(state, 1);
+    rc = pop_append_toks(state, ws_toks, 1);
+    TSCFG_CHECK_GOTO(rc, cleanup);
   }
 
   rc = TSCFG_OK;
 cleanup:
-  free_toks(ws_toks, true);
+  if (rc != TSCFG_OK) {
+    free_toks(ws_toks, true);
+  }
   return rc;
 }
 
@@ -433,7 +431,8 @@ static tscfg_rc key(ts_parse_state *state, tok_array *toks) {
         rc = append_toks(toks, &ws_toks);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
-        pop_toks(state, 1);
+        rc = pop_append_toks(state, toks, 1);
+        TSCFG_CHECK_GOTO(rc, cleanup);
         break;
       default:
         // Something not part of key
@@ -499,14 +498,14 @@ static tscfg_rc value(ts_parse_state *state) {
 
         ok = state->reader.token(state->reader_state, &tok);
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
-        pop_toks(state, 1);
+        pop_toks(state, 1, false);
         break;
 
       case TSCFG_TOK_OPEN_BRACE:
         rc = emit_toks(state, &ws_toks, true);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
-        pop_toks(state, 1);
+        pop_toks(state, 1, true);
 
         ok = state->reader.obj_start(state->reader_state);
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
@@ -521,14 +520,14 @@ static tscfg_rc value(ts_parse_state *state) {
                         "Expected close brace");
         TSCFG_CHECK_GOTO(rc, cleanup);
 
-        pop_toks(state, 1);
+        pop_toks(state, 1, true);
         break;
 
       case TSCFG_TOK_OPEN_SQUARE:
         rc = emit_toks(state, &ws_toks, true);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
-        pop_toks(state, 1);
+        pop_toks(state, 1, true);
 
         ok = state->reader.arr_start(state->reader_state);
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
@@ -543,7 +542,7 @@ static tscfg_rc value(ts_parse_state *state) {
                         "Expected close square bracket");
         TSCFG_CHECK_GOTO(rc, cleanup);
 
-        pop_toks(state, 1);
+        pop_toks(state, 1, true);
         break;
 
       case TSCFG_TOK_COMMA:
@@ -572,7 +571,7 @@ static tscfg_rc value(ts_parse_state *state) {
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (next_tag == TSCFG_TOK_COMMA) {
-      pop_toks(state, 1); // Remove comma
+      pop_toks(state, 1, true); // Remove comma
       // Explicit separator: ready for next item
       break;
     } else if (newline) {
@@ -817,15 +816,17 @@ static void free_toks(tok_array *toks, bool free_array) {
  *
  * Caller must ensure that there are at least count tokens.
  *
- * This will free any strings not set to NULL.
+ * free_toks: if true, free any strings not set to NULL.
  */
-static void pop_toks(ts_parse_state *state, int count) {
+static void pop_toks(ts_parse_state *state, int count, bool free_toks) {
   assert(count >= 0);
   assert(count <= state->toks.len);
 
   // Cleanup memory first
-  for (int i = 0; i < count; i++) {
-    free(state->toks.toks[i].str);
+  if (free_toks) {
+    for (int i = 0; i < count; i++) {
+      free(state->toks.toks[i].str);
+    }
   }
 
   memmove(&state->toks.toks[0], &state->toks.toks[count],
@@ -854,7 +855,7 @@ static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline) {
         tok.tag == TSCFG_TOK_WS ||
         tok.tag == TSCFG_TOK_WS_NEWLINE ||
         tok.tag == TSCFG_TOK_COMMENT)) {
-      pop_toks(state, 1);
+      pop_toks(state, 1, true);
 
       if (newline != NULL &&
           tok.tag == TSCFG_TOK_WS_NEWLINE) {
@@ -866,15 +867,20 @@ static tscfg_rc skip_whitespace(ts_parse_state *state, bool *newline) {
   }
 }
 
-/*
- * Remove first token and take ownership of string.
- *
- * Caller must ensure that there is at least one valid token.
- */
-static char *pop_tok_str(ts_parse_state *state, size_t *len) {
-  assert(state->toks.len >= 1);
-  char *str = tscfg_own_token(&state->toks.toks[0], len);
+static tscfg_rc pop_append_toks(ts_parse_state *state, tok_array *toks,
+                                int count) {
+  tscfg_rc rc;
+  assert(state->toks.len >= count);
 
-  pop_toks(state, 1);
-  return str;
+  if (toks->len == toks->size) {
+    rc = expand_toks(toks, toks->len + count);
+    TSCFG_CHECK(rc);
+  }
+
+  for (int i = 0; i < count; i++) {
+    toks->toks[toks->len++] = state->toks.toks[i];
+  }
+
+  pop_toks(state, count, false);
+  return TSCFG_OK;
 }

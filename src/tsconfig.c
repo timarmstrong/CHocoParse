@@ -373,6 +373,7 @@ static tscfg_rc accum_whitespace(ts_parse_state *state, bool *newline,
     }
 
     ws_toks->toks[ws_toks->len++] = tok;
+    pop_toks(state, 1);
   }
 
   rc = TSCFG_OK;

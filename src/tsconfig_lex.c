@@ -128,6 +128,7 @@ tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in) {
   TSCFG_CHECK_MALLOC(lex->buf);
   lex->buf_size = buf_init_size;
   lex->buf_len = 0;
+  lex->buf_pos = 0;
 
   lex->line = 1;
   lex->line_char = 1;

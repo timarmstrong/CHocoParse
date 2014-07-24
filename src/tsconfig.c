@@ -772,6 +772,7 @@ static tscfg_rc expand_toks(tok_array *toks, int min_size) {
     void *tmp = realloc(toks->toks, sizeof(toks->toks[0]) * (size_t)new_size);
     TSCFG_CHECK_MALLOC(tmp);
 
+    toks->toks = tmp;
     toks->size = new_size;
   }
 

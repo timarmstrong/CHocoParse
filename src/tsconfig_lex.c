@@ -22,6 +22,9 @@
 // Unicode escape code length (hex digits)
 #define UNICODE_ESCAPE_LEN 4
 
+#define LEX_REPORT_ERR(state, ...) \
+  lex_report_err(__FILE__, __LINE__, state, __VA_ARGS__)
+
 typedef struct {
   char *str;
   size_t size; // Allocated size in bytes
@@ -114,7 +117,8 @@ static tscfg_rc strbuf_append_utf8(tscfg_strbuf *sb, tscfg_char_t c,
   CASE_UNICODE_ZS: CASE_UNICODE_ZL: CASE_UNICODE_ZP: case 0xFEFF /* BOM */: \
   CASE_OTHER_ASCII_WHITESPACE
 
-static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...);
+static void lex_report_err(const char *file, int line, 
+          tscfg_lex_state *lex, const char *fmt, ...);
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in) {
   lex->in = in;
@@ -149,7 +153,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
   // Token starts at current position
   tok_file_line(lex, tok);
-
+  
   // Next character should be start of token.
   tscfg_char_t c;
   int got;
@@ -189,7 +193,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
       TSCFG_CHECK(rc);
 
       if (got == 0) {
-        lex_report_err(lex, "Trailing + at end of file");
+        LEX_REPORT_ERR(lex, "Trailing + at end of file");
         return TSCFG_ERR_SYNTAX;
       } else if (c != '=') {
         // Must be += operator
@@ -197,7 +201,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
         set_nostr_tok(TSCFG_TOK_PLUSEQUAL, tok);
         return TSCFG_OK;
       } else {
-        lex_report_err(lex, "Invalid char %c after =", c);
+        LEX_REPORT_ERR(lex, "Invalid char %c after =", c);
         return TSCFG_ERR_SYNTAX;
       }
     }
@@ -227,7 +231,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
       if (is_hocon_unquoted_char(c)) {
         return extract_hocon_unquoted(lex, tok);
       } else {
-        lex_report_err(lex, "Unexpected character: %c", c);
+        LEX_REPORT_ERR(lex, "Unexpected character: %c", c);
         return TSCFG_ERR_SYNTAX;
       }
   }
@@ -323,11 +327,14 @@ static tscfg_rc lex_peek(tscfg_lex_state *lex, tscfg_char_t *chars,
     tscfg_char_t c;
 
     rc = tscfg_decode_byte1(b, &enc_len, &c);
-    TSCFG_CHECK(rc);
+    if (rc != TSCFG_OK) {
+      LEX_REPORT_ERR(lex, "Invalid UTF-8 start byte: 0x%x", (unsigned)b);
+      return TSCFG_ERR_INVALID;
+    }
 
     // If valid UTF-8, should be enough bytes left in buffer
     if (enc_len > (buf_end - buf_pos)) {
-      lex_report_err(lex, "Incomplete UTF-8 character at end of input");
+      LEX_REPORT_ERR(lex, "Incomplete UTF-8 character at end of input");
       return TSCFG_ERR_INVALID;
     }
 
@@ -409,7 +416,7 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
       // Need to distinguish between eof and error
       int err_code = ferror(in->data.f);
       if (err_code != 0) {
-        lex_report_err(lex, "Error reading input");
+        LEX_REPORT_ERR(lex, "Error reading input");
         return TSCFG_ERR_IO;
       }
     }
@@ -424,7 +431,7 @@ static tscfg_rc lex_read(tscfg_lex_state *lex, unsigned char *buf, size_t bytes,
 
     *read_bytes = copy_bytes;
   } else {
-    tscfg_report_err("Unsupported input type: %i", (int)in->kind);
+    REPORT_ERR("Unsupported input type: %i", (int)in->kind);
     return TSCFG_ERR_UNIMPL;
   }
 
@@ -467,6 +474,7 @@ static void lex_eat_ascii(tscfg_lex_state *lex, size_t bytes) {
   }
 
   lex->buf_pos += bytes;
+  lex->buf_len -= bytes;
 }
 
 /*
@@ -497,6 +505,7 @@ static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
   // Check caller called when in valid state
   assert(rc == TSCFG_OK);
 
+  assert(enc_len >= 1);
   assert(enc_len <= lex->buf_len);
 
   rc = strbuf_expand(sb, sb->len + enc_len, aggressive_resize);
@@ -505,6 +514,7 @@ static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
 
   lex_update_line(lex, b);
   lex->buf_pos += enc_len;
+  lex->buf_len -= enc_len;
 
   return TSCFG_OK;
 }
@@ -667,7 +677,7 @@ static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 
     if (got < 2) {
       // Cannot be comment close, therefore unclosed comment
-      lex_report_err(lex, "/* comment without matching */");
+      LEX_REPORT_ERR(lex, "/* comment without matching */");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
@@ -872,9 +882,9 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
     int got;
     rc = lex_peek(lex, &c, 1, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
-
+  
     if (got == 0) {
-      lex_report_err(lex, "String missing closing \"");
+      LEX_REPORT_ERR(lex, "String missing closing \"");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
@@ -922,7 +932,7 @@ extract_json_str_escape(tscfg_lex_state *lex, tscfg_char_t *result) {
   TSCFG_CHECK(rc);
 
   if (got == 0) {
-    lex_report_err(lex, "\\ without escape code in string");
+    LEX_REPORT_ERR(lex, "\\ without escape code in string");
     return TSCFG_ERR_SYNTAX;
   }
 
@@ -981,7 +991,7 @@ static tscfg_rc extract_unicode_escape(tscfg_lex_state *lex, tscfg_char_t *c) {
   TSCFG_CHECK(rc);
 
   if (got < UNICODE_ESCAPE_LEN) {
-    lex_report_err(lex, "Incomplete unicode escape \\uxxxx in string: "
+    LEX_REPORT_ERR(lex, "Incomplete unicode escape \\uxxxx in string: "
                         "expected four hexadecimal digits");
     return TSCFG_ERR_SYNTAX;
   }
@@ -997,7 +1007,7 @@ static tscfg_rc extract_unicode_escape(tscfg_lex_state *lex, tscfg_char_t *c) {
     } else if (hex_c >= 'a' && hex_c <= 'f') {
       unicode += ((hex_c - 'a') + 10);
     } else {
-      lex_report_err(lex, "Invalid unicode escape: digit %i (%lc):"
+      LEX_REPORT_ERR(lex, "Invalid unicode escape: digit %i (%lc):"
                           "hexadecimal digit", i + 1, hex_c);
       return TSCFG_ERR_SYNTAX;
     }
@@ -1034,7 +1044,7 @@ static tscfg_rc extract_hocon_multiline_str(tscfg_lex_state *lex,
     TSCFG_CHECK_GOTO(rc, cleanup);
 
     if (got < 3) {
-      lex_report_err(lex, "Unterminated \"\"\" string");
+      LEX_REPORT_ERR(lex, "Unterminated \"\"\" string");
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
@@ -1233,12 +1243,15 @@ static bool is_comment_start(const tscfg_char_t *buf, int len) {
   }
 }
 
-static void lex_report_err(tscfg_lex_state *lex, const char *fmt, ...) {
+static void lex_report_err(const char *file, int line,
+          tscfg_lex_state *lex, const char *fmt, ...) {
   // TODO: include context, e.g. line number, in errors.
   va_list args;
   va_start(args, fmt);
-  tscfg_report_err_v(fmt, args);
+  tscfg_report_err_v(file, line, fmt, args);
   va_end(args);
+  fprintf(TSCFG_ERR_FILE, "Lexer error at input location %i:%i\n",
+          lex->line, lex->line_char);
 }
 
 /*

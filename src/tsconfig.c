@@ -30,6 +30,9 @@
  */
 #define ALLOW_EMPTY_VALUE true
 
+#define PARSE_REPORT_ERR(state, ...) \
+  ts_parse_report_err(__FILE__, __LINE__, state, __VA_ARGS__)
+
 typedef struct {
   tscfg_tok *toks;
   int size;
@@ -52,7 +55,8 @@ typedef struct {
 static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
   tscfg_reader reader, void *reader_state);
 static void ts_parse_state_finalize(ts_parse_state *state);
-static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...);
+static void ts_parse_report_err(const char *file, int line,
+              ts_parse_state *state, const char *fmt, ...);
 
 static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
                             void *reader_state);
@@ -109,13 +113,12 @@ tscfg_rc tsconfig_parse_tree(tsconfig_input in, tscfg_fmt fmt,
   return TSCFG_OK;
 }
 
-
 tscfg_rc tsconfig_parse(tsconfig_input in, tscfg_fmt fmt,
       tscfg_reader reader, void *reader_state) {
   if (fmt == TSCFG_HOCON) {
     return parse_hocon(in, reader, reader_state);
   } else {
-    tscfg_report_err("Invalid file format code %i", (int)fmt);
+    REPORT_ERR("Invalid file format code %i", (int)fmt);
     return TSCFG_ERR_ARG;
   }
 }
@@ -167,7 +170,7 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
       const char *msg = (open_tag == TSCFG_TOK_OPEN_BRACE) ?
               "Expected closing brace to match initial open" :
               "Expected closing square bracket to match initial open";
-      ts_parse_report_err(&state, msg);
+      PARSE_REPORT_ERR(&state, msg);
       rc = TSCFG_ERR_SYNTAX;
       goto cleanup;
     }
@@ -179,7 +182,7 @@ static tscfg_rc parse_hocon(tsconfig_input in, tscfg_reader reader,
   assert(got == 1); // Should get at least end of file
   if (tok.tag != TSCFG_TOK_EOF) {
     // TODO: include token tag
-    ts_parse_report_err(&state, "Trailing tokens, starting with: %.*s",
+    PARSE_REPORT_ERR(&state, "Trailing tokens, starting with: %.*s",
                              (int)tok.len, tok.str);
   }
 
@@ -314,10 +317,10 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
       }
       return TSCFG_OK;
     case TSCFG_TOK_EOF:
-      ts_parse_report_err(state, "End of input before value matching key");
+      PARSE_REPORT_ERR(state, "End of input before value matching key");
       return TSCFG_ERR_SYNTAX;
     default:
-      ts_parse_report_err(state, "Expected key/value separator or open brace, "
+      PARSE_REPORT_ERR(state, "Expected key/value separator or open brace, "
                        "but got something else.");
       return TSCFG_ERR_SYNTAX;
   }
@@ -420,7 +423,7 @@ static tscfg_rc key(ts_parse_state *state, tok_array *toks) {
       case TSCFG_TOK_VAR:
         // Plain tokens with or without string
         if (comment) {
-          tscfg_report_err("Comments not allowed in key");
+          PARSE_REPORT_ERR(state, "Comments not allowed in key");
           rc = TSCFG_ERR_SYNTAX;
           goto cleanup;
         }
@@ -547,7 +550,7 @@ static tscfg_rc value(ts_parse_state *state) {
           /* Don't emit anything, keep comma as next token*/
           free_toks(&ws_toks, false);
         } else {
-          ts_parse_report_err(state, "Empty values are not valid syntax");
+          PARSE_REPORT_ERR(state, "Empty values are not valid syntax");
           rc = TSCFG_ERR_SYNTAX;
           goto cleanup;
         }
@@ -596,7 +599,7 @@ static tscfg_rc emit_toks(ts_parse_state *state, tok_array *toks,
     tscfg_tok *tok = &toks->toks[i];
 
     if (check_no_comments && tok->tag == TSCFG_TOK_COMMENT) {
-      tscfg_report_err("Comments not allowed between tokens here");
+      PARSE_REPORT_ERR(state, "Comments not allowed between tokens here");
       return TSCFG_ERR_SYNTAX;
     }
 
@@ -623,7 +626,7 @@ static tscfg_rc ts_parse_state_init(ts_parse_state *state, tsconfig_input in,
       reader.key_val_start == NULL || reader.key_val_end == NULL ||
       reader.val_start == NULL || reader.val_end == NULL ||
       reader.token == NULL) {
-    tscfg_report_err("Reader has NULL function");
+    REPORT_ERR("Reader has NULL function");
     return TSCFG_ERR_ARG;
   }
 
@@ -649,11 +652,12 @@ static void ts_parse_state_finalize(ts_parse_state *state) {
   free_toks(&state->toks, true);
 }
 
-static void ts_parse_report_err(ts_parse_state *state, const char *fmt, ...) {
+static void ts_parse_report_err(const char *file, int line,
+              ts_parse_state *state, const char *fmt, ...) {
   // TODO: include context in errors.
   va_list args;
   va_start(args, fmt);
-  tscfg_report_err_v(fmt, args);
+  tscfg_report_err_v(file, line, fmt, args);
   va_end(args);
 }
 
@@ -667,7 +671,7 @@ static tscfg_rc expect_tag(ts_parse_state *state, tscfg_tok_tag expected,
 
   if (tag != expected) {
     // TODO: report actual tag
-    ts_parse_report_err(state, "%s", errmsg_start);
+    PARSE_REPORT_ERR(state, "%s", errmsg_start);
     return TSCFG_ERR_SYNTAX;
   }
 

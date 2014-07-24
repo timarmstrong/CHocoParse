@@ -63,7 +63,7 @@ tscfg_rc tscfg_obj_merge_keys(tscfg_obj *obj) {
 
 tscfg_rc tscfg_obj_sort(tscfg_obj *obj) {
   if (obj == NULL || obj->elems == NULL || obj->nelems < 0) {
-    tscfg_report_err("Invalid key-value object: %p", obj);
+    REPORT_ERR("Invalid key-value object: %p", obj);
     return TSCFG_ERR_ARG;
   }
 

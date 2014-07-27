@@ -774,6 +774,7 @@ cleanup:
  */
 static tscfg_rc extract_var(tscfg_lex_state *lex, tscfg_tok *tok) {
   // TODO: var lexing
+  LEX_REPORT_ERR(lex, "Don't support variables yet"); 
   return TSCFG_ERR_UNIMPL;
 }
 

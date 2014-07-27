@@ -114,7 +114,8 @@ static bool tread_val_end(void *s) {
 }
 
 static bool tread_token(void *s, tscfg_tok *tok) {
-  // TODO: implement
+  fprintf(stderr, "tok: %s \"%.*s\"\n", tscfg_tok_tag_name(tok->tag),
+              (int)tok->len, tok->str);
   return true;
 }
 

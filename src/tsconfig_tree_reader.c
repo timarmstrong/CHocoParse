@@ -90,7 +90,7 @@ static bool tread_key_val_start(void *s, tscfg_tok *key_toks, int nkey_toks,
     if (i != 0) {
       fprintf(stderr, ", ");
     }
-    fprintf(stderr, "%s\"%.*s\"", tscfg_tok_tag_name(key_toks[i].tag),
+    fprintf(stderr, "%s \"%.*s\"", tscfg_tok_tag_name(key_toks[i].tag),
                 (int)key_toks[i].len, key_toks[i].str);
   }
 

@@ -668,7 +668,8 @@ static tscfg_rc expect_tag(ts_parse_state *state, tscfg_tok_tag expected,
 
   if (tag != expected) {
     // TODO: report actual tag
-    PARSE_REPORT_ERR(state, "%s", errmsg_start);
+    PARSE_REPORT_ERR(state, "%s. Next token is", errmsg_start,
+                    tscfg_tok_tag_name(tag));
     return TSCFG_ERR_SYNTAX;
   }
 

@@ -65,4 +65,6 @@ typedef struct {
   int line_char; // UTF-8 character index in line
 } tscfg_tok;
 
+const char *tscfg_tok_tag_name(tscfg_tok_tag tag);
+
 #endif // __TSCONFIG_TOK_H

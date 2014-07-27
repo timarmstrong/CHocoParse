@@ -795,6 +795,7 @@ static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
   assert(c <= 127);
   sb.len = 1;
   sb.str[0] = (char)c;
+  lex_eat_ascii(lex, 1);
 
   bool saw_dec_point = false;
 

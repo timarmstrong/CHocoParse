@@ -1146,10 +1146,12 @@ static tscfg_rc extract_keyword_or_hocon_unquoted(tscfg_lex_state *lex,
     kw = "false";
     kwlen = 5;
     kwtag = TSCFG_TOK_FALSE;
+    break;
   case 'n':
     kw = "null";
     kwlen = 4;
     kwtag = TSCFG_TOK_NULL;
+    break;
   default:
     assert(false);
     return TSCFG_ERR_UNKNOWN;

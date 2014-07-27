@@ -33,6 +33,18 @@
 #define PARSE_REPORT_ERR(state, ...) \
   ts_parse_report_err(__FILE__, __LINE__, state, __VA_ARGS__)
 
+
+#define PARSE_DEBUG 1
+
+#ifdef PARSE_DEBUG
+#define DEBUG(fmt, ...) \
+  fprintf(stderr, "%s:%i: " fmt "\n",  \
+      __FILE__, __LINE__, __VA_ARGS__)
+#else
+#define DEBUG(fmt, ...)
+#endif
+
+
 typedef struct {
   tscfg_tok *toks;
   int size;
@@ -319,7 +331,7 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
       }
       return TSCFG_OK;
     case TSCFG_TOK_EOF:
-      PARSE_REPORT_ERR(state, "End of input before value matching key");
+      PARSE_REPORT_ERR(state, "End of input before key/value separator");
       return TSCFG_ERR_SYNTAX;
     default:
       PARSE_REPORT_ERR(state, "Expected key/value separator or open brace, "
@@ -822,6 +834,12 @@ static void free_toks(tok_array *toks, bool free_array) {
 static void pop_toks(ts_parse_state *state, int count, bool free_toks) {
   assert(count >= 0);
   assert(count <= state->toks.len);
+
+  for (int i = 0; i < count; i++) {
+    tscfg_tok *tok = &state->toks.toks[i];
+    DEBUG("pop_toks: tok %i is %s(%.*s)", i, tscfg_tok_tag_name(tok->tag),
+          (int)tok->len, tok->str);
+  }
 
   // Cleanup memory first
   if (free_toks) {

@@ -10,6 +10,7 @@
 #include "tsconfig_tree_reader.h"
 
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "tsconfig_err.h"
@@ -60,11 +61,13 @@ tscfg_tree_reader_done(tscfg_treeread_state *state, tsconfig_tree *tree) {
 
 static bool tread_obj_start(void *s) {
   // TODO: implement
+  fprintf(stderr, "obj_start\n");
   return true;
 }
 
 static bool tread_obj_end(void *s) {
   // TODO: implement
+  fprintf(stderr, "obj_end\n");
   return true;
 }
 
@@ -81,6 +84,17 @@ static bool tread_arr_end(void *s) {
 static bool tread_key_val_start(void *s, tscfg_tok *key_toks, int nkey_toks,
                                 tscfg_tok_tag sep) {
   // TODO: implement
+  fprintf(stderr, "key_val_start: key=[");
+
+  for (int i = 0; i < nkey_toks; i++) {
+    if (i != 0) {
+      fprintf(stderr, ", ");
+    }
+    fprintf(stderr, "%s\"%.*s\"", tscfg_tok_tag_name(key_toks[i].tag),
+                (int)key_toks[i].len, key_toks[i].str);
+  }
+
+  fprintf(stderr, "] sep=%s\n", tscfg_tok_tag_name(sep));
   return true;
 }
 

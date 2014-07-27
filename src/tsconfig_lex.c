@@ -500,7 +500,7 @@ static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
 
   size_t enc_len;
   tscfg_char_t c;
-  unsigned char b = lex->buf[0];
+  unsigned char b = lex->buf[lex->buf_pos];
   rc = tscfg_decode_byte1(b, &enc_len, &c);
 
   // Check caller called when in valid state
@@ -510,7 +510,7 @@ static tscfg_rc lex_copy_char(tscfg_lex_state *lex, tscfg_strbuf *sb,
   assert(enc_len <= lex->buf_len);
 
   rc = strbuf_expand(sb, sb->len + enc_len, aggressive_resize);
-  memcpy(&sb->str[sb->len], lex->buf, enc_len);
+  memcpy(&sb->str[sb->len], &lex->buf[lex->buf_pos], enc_len);
   sb->len += enc_len;
 
   lex_update_line(lex, b);
@@ -1098,7 +1098,7 @@ static tscfg_rc extract_hocon_unquoted(tscfg_lex_state *lex, tscfg_tok *tok) {
       break;
     }
 
-    if (!is_hocon_unquoted_char(buf[0]) &&
+    if (!is_hocon_unquoted_char(buf[0]) ||
         is_hocon_whitespace(buf[0])) {
       // Cases where unquoted text definitely terminates
       break;

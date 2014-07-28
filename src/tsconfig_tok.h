@@ -37,6 +37,10 @@ typedef enum {
   TSCFG_TOK_EQUAL,
   TSCFG_TOK_PLUSEQUAL,
   TSCFG_TOK_COLON,
+ 
+  /* Variable substitution start: don't include string */
+  TSCFG_TOK_OPEN_SUB,
+  TSCFG_TOK_OPEN_OPT_SUB,
 
   /* Keywords: don't include string */
   TSCFG_TOK_TRUE,
@@ -47,7 +51,6 @@ typedef enum {
   TSCFG_TOK_NUMBER, // Numeric token, text is stored in str
   TSCFG_TOK_UNQUOTED, // Unquoted text, text is stored in str
   TSCFG_TOK_STRING, // Quoted text, string contents after escaping, etc
-  TSCFG_TOK_VAR, // Variable name, name stored in string
 } tscfg_tok_tag;
 
 /*

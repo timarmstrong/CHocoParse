@@ -60,7 +60,7 @@ static tscfg_rc extract_line_comment(tscfg_lex_state *lex, tscfg_tok *tok,
 static tscfg_rc extract_multiline_comment(tscfg_lex_state *lex, tscfg_tok *tok,
                                      bool include_str);
 
-static tscfg_rc extract_var(tscfg_lex_state *lex, tscfg_tok *tok);
+static tscfg_rc extract_sub_start(tscfg_lex_state *lex, tscfg_tok *tok);
 static tscfg_rc extract_json_number(tscfg_lex_state *lex, tscfg_char_t c,
                                     tscfg_tok *tok);
 static tscfg_rc extract_hocon_str(tscfg_lex_state *lex, tscfg_tok *tok);
@@ -117,7 +117,7 @@ static tscfg_rc strbuf_append_utf8(tscfg_strbuf *sb, tscfg_char_t c,
   CASE_UNICODE_ZS: CASE_UNICODE_ZL: CASE_UNICODE_ZP: case 0xFEFF /* BOM */: \
   CASE_OTHER_ASCII_WHITESPACE
 
-static void lex_report_err(const char *file, int line, 
+static void lex_report_err(const char *file, int line,
           tscfg_lex_state *lex, const char *fmt, ...);
 
 tscfg_rc tscfg_lex_init(tscfg_lex_state *lex, tsconfig_input in) {
@@ -154,7 +154,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
   // Token starts at current position
   tok_file_line(lex, tok);
-  
+
   // Next character should be start of token.
   tscfg_char_t c;
   int got;
@@ -226,7 +226,7 @@ tscfg_rc tscfg_read_tok(tscfg_lex_state *lex, tscfg_tok *tok,
 
     case '$':
       lex_eat(lex, 1);
-      return extract_var(lex, tok);
+      return extract_sub_start(lex, tok);
 
     default:
       if (is_hocon_unquoted_char(c)) {
@@ -768,14 +768,37 @@ cleanup:
 }
 
 /*
- * Extract HOCON variable.
+ * Extract HOCON variable start: ${ or ${?.
  * Assume initial $ has been consumed.
  * Store variable name into token.
  */
-static tscfg_rc extract_var(tscfg_lex_state *lex, tscfg_tok *tok) {
-  // TODO: var lexing
-  LEX_REPORT_ERR(lex, "Don't support variables yet"); 
-  return TSCFG_ERR_UNIMPL;
+static tscfg_rc extract_sub_start(tscfg_lex_state *lex, tscfg_tok *tok) {
+  tscfg_rc rc;
+
+  char buf[2];
+  size_t got = 0;
+  rc = lex_peek_bytes(lex, buf, 2, &got);
+  TSCFG_CHECK(rc);
+
+  if (buf[0] != '{') {
+    LEX_REPORT_ERR(lex, "Expected { after $, but got %c", buf[0]);
+    return TSCFG_ERR_SYNTAX;
+  }
+
+  tscfg_tok_tag tag;
+  int chars;
+  if (got == 2 && buf[1] == '?') {
+    tag = TSCFG_TOK_OPEN_OPT_SUB;
+    chars = 2;
+  } else {
+    tag = TSCFG_TOK_OPEN_SUB;
+    chars = 1;
+  }
+
+  lex_eat_ascii(lex, chars);
+  set_nostr_tok(tag, tok);
+
+  return TSCFG_OK;
 }
 
 
@@ -885,7 +908,7 @@ static tscfg_rc extract_json_str(tscfg_lex_state *lex, tscfg_tok *tok) {
     int got;
     rc = lex_peek(lex, &c, 1, &got);
     TSCFG_CHECK_GOTO(rc, cleanup);
-  
+
     if (got == 0) {
       LEX_REPORT_ERR(lex, "String missing closing \"");
       rc = TSCFG_ERR_SYNTAX;

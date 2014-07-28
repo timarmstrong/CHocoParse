@@ -432,7 +432,6 @@ static tscfg_rc key(ts_parse_state *state, tok_array *toks) {
       case TSCFG_TOK_NUMBER:
       case TSCFG_TOK_UNQUOTED:
       case TSCFG_TOK_STRING:
-      case TSCFG_TOK_VAR:
         // Plain tokens with or without string
         if (comment) {
           PARSE_REPORT_ERR(state, "Comments not allowed in key");
@@ -504,7 +503,6 @@ static tscfg_rc value(ts_parse_state *state) {
       case TSCFG_TOK_NUMBER:
       case TSCFG_TOK_UNQUOTED:
       case TSCFG_TOK_STRING:
-      case TSCFG_TOK_VAR:
         rc = emit_toks(state, &ws_toks, true);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
@@ -512,6 +510,24 @@ static tscfg_rc value(ts_parse_state *state) {
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
         pop_toks(state, 1, false);
         break;
+
+      case TSCFG_TOK_OPEN_SUB:
+      case TSCFG_TOK_OPEN_OPT_SUB: {
+        // TODO: factor out into function
+        // TODO: this will discard leading/trailing whitespace I think
+        tok_array path_toks;
+        pop_toks(state, 1, false);
+        rc = key(state, &path_toks);
+        TSCFG_CHECK_GOTO(rc, cleanup);
+
+        bool option = (tok.tag == TSCFG_TOK_OPEN_OPT_SUB);
+
+        ok = state->reader.var_sub(state->reader_state, );
+        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
+
+        // TODO: close brace
+        break;
+      }
 
       case TSCFG_TOK_OPEN_BRACE:
         rc = emit_toks(state, &ws_toks, true);

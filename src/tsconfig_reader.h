@@ -69,9 +69,16 @@ typedef struct {
   /*
    * A token comprising part of a value.
    * Tokens: true/false/null, quoted/unquoted strings, numbers,
-   * whitespace (if between other tokens), and variables.
+   * whitespace (if between other tokens).
    */
   bool (*token)(void *s, tscfg_tok *tok);
+
+  /*
+   * A variable substitution expression.
+   * toks: path expression for variable substitution
+   * optional: if true, optional substitution, i.e. ${?
+   */
+  bool (*var_sub)(void *s, tscfg_tok *toks, int ntoks, bool optional);
 
 } tscfg_reader;
 

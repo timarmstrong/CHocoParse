@@ -12,13 +12,13 @@
 const char *tscfg_tok_tag_name(tscfg_tok_tag tag) {
   switch (tag) {
     case TSCFG_TOK_INVALID:
-      return "TOK_INVALID"; 
+      return "TOK_INVALID";
     case TSCFG_TOK_EOF:
-      return "TOK_EOF"; 
+      return "TOK_EOF";
     case TSCFG_TOK_WS:
-      return "TOK_WS"; 
+      return "TOK_WS";
     case TSCFG_TOK_WS_NEWLINE:
-      return "TOK_WS_NEWLINE"; 
+      return "TOK_WS_NEWLINE";
     case TSCFG_TOK_COMMENT:
       return "TOK_COMMENT";
     case TSCFG_TOK_OPEN_BRACE:
@@ -48,13 +48,15 @@ const char *tscfg_tok_tag_name(tscfg_tok_tag tag) {
     case TSCFG_TOK_NULL:
       return "TOK_NULL";
     case TSCFG_TOK_NUMBER:
-      return "TOK_NUMBER"; 
+      return "TOK_NUMBER";
     case TSCFG_TOK_UNQUOTED:
-      return "TOK_UNQUOTED"; 
+      return "TOK_UNQUOTED";
     case TSCFG_TOK_STRING:
-      return "TOK_STRING"; 
-    case TSCFG_TOK_VAR:
-      return "TOK_VAR"; 
+      return "TOK_STRING";
+    case TSCFG_TOK_OPEN_SUB:
+      return "TOK_OPEN_SUB";
+    case TSCFG_TOK_OPEN_OPT_SUB:
+      return "TOK_OPEN_OPT_SUB";
     default:
       return "(unknown)";
   }

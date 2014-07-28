@@ -32,6 +32,7 @@ static bool tread_key_val_end(void *s);
 static bool tread_val_start(void *s);
 static bool tread_val_end(void *s);
 static bool tread_token(void *s, tscfg_tok *tok);
+static bool tread_var_sub(void *s, tscfg_tok *toks, int ntoks, bool optional);
 
 tscfg_rc
 tscfg_tree_reader_init(tscfg_reader *reader, tscfg_treeread_state **state) {
@@ -47,6 +48,7 @@ tscfg_tree_reader_init(tscfg_reader *reader, tscfg_treeread_state **state) {
   reader->val_start = tread_val_start;
   reader->val_end = tread_val_end;
   reader->token = tread_token;
+  reader->var_sub = tread_var_sub;
 
   return TSCFG_OK;
 }
@@ -116,6 +118,22 @@ static bool tread_val_end(void *s) {
 static bool tread_token(void *s, tscfg_tok *tok) {
   fprintf(stderr, "tok: %s \"%.*s\"\n", tscfg_tok_tag_name(tok->tag),
               (int)tok->len, tok->str);
+  return true;
+}
+
+static bool tread_var_sub(void *s, tscfg_tok *toks, int ntoks, bool optional) {
+  // TODO: implement
+  fprintf(stderr, "var_sub: optional=%s path=[", optional ? "true" : "false");
+
+  for (int i = 0; i < ntoks; i++) {
+    if (i != 0) {
+      fprintf(stderr, ", ");
+    }
+    fprintf(stderr, "%s \"%.*s\"", tscfg_tok_tag_name(toks[i].tag),
+                (int)toks[i].len, toks[i].str);
+  }
+
+  fprintf(stderr, "]\n");
   return true;
 }
 

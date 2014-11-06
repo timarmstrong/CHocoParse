@@ -34,9 +34,9 @@
   ts_parse_report_err(__FILE__, __LINE__, state, __VA_ARGS__)
 
 
-#define PARSE_DEBUG 1
+#define PARSE_DEBUG 0
 
-#ifdef PARSE_DEBUG
+#if PARSE_DEBUG == 1
 #define DEBUG(fmt, ...) \
   fprintf(stderr, "%s:%i: " fmt "\n",  \
       __FILE__, __LINE__, __VA_ARGS__)

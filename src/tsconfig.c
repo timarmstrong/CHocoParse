@@ -552,14 +552,8 @@ static tscfg_rc value(ts_parse_state *state) {
 
         pop_toks(state, 1, true);
 
-        ok = state->reader.obj_start(state->reader_state);
-        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
-
         rc = parse_hocon_obj_body(state);
         TSCFG_CHECK(rc);
-
-        ok = state->reader.obj_end(state->reader_state);
-        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
 
         rc = expect_tag(state, TSCFG_TOK_CLOSE_BRACE,
                         "Expected close brace");

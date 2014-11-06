@@ -10,7 +10,10 @@
 #ifndef __TSCONFIG_TOK_H
 #define __TSCONFIG_TOK_H
 
+#include <stdbool.h>
 #include <stddef.h>
+
+#include "tsconfig_common.h"
 
 typedef enum {
   /* Special tokens: don't include string */
@@ -68,8 +71,25 @@ typedef struct {
   int line_char; // UTF-8 character index in line
 } tscfg_tok;
 
-const char *tscfg_tok_tag_name(tscfg_tok_tag tag);
+/*
+ * Dynamically sized array of tokens
+ */
+typedef struct {
+  tscfg_tok *toks;
+  int size;
+  int len;
+} tscfg_tok_array;
 
+static const tscfg_tok_array TSCFG_EMPTY_TOK_ARRAY = {
+  .toks = NULL, .size = 0, .len = 0
+};
+
+const char *tscfg_tok_tag_name(tscfg_tok_tag tag);
 void tscfg_tok_free(tscfg_tok *tok);
+
+tscfg_rc tscfg_tok_array_expand(tscfg_tok_array *toks, int min_size);
+tscfg_rc tscfg_tok_array_append(tscfg_tok_array *arr, tscfg_tok *tok);
+tscfg_rc tscfg_tok_array_concat(tscfg_tok_array *dst, tscfg_tok_array *src);
+void tscfg_tok_array_free(tscfg_tok_array *toks, bool free_array);
 
 #endif // __TSCONFIG_TOK_H

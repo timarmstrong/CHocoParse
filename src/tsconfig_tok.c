@@ -9,6 +9,12 @@
 
 #include "tsconfig_tok.h"
 
+#include "tsconfig_err.h"
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
 const char *tscfg_tok_tag_name(tscfg_tok_tag tag) {
   switch (tag) {
     case TSCFG_TOK_INVALID:
@@ -69,4 +75,67 @@ void tscfg_tok_free(tscfg_tok *tok) {
   tok->tag = TSCFG_TOK_INVALID;
   tok->str = NULL;
   tok->len = 0;
+}
+
+tscfg_rc tscfg_tok_array_expand(tscfg_tok_array *toks, int min_size) {
+  if (min_size > toks->size) {
+    int new_size = toks->size * 2;
+    if (new_size < min_size) {
+      new_size = min_size;
+    }
+
+    void *tmp = realloc(toks->toks, sizeof(toks->toks[0]) * (size_t)new_size);
+    TSCFG_CHECK_MALLOC(tmp);
+
+    toks->toks = tmp;
+    toks->size = new_size;
+  }
+
+  return TSCFG_OK;
+}
+
+tscfg_rc tscfg_tok_array_append(tscfg_tok_array *arr, tscfg_tok *tok) {
+  assert(arr != NULL);
+  assert(tok != NULL);
+  tscfg_rc rc = tscfg_tok_array_expand(arr, arr->len + 1);
+  TSCFG_CHECK(rc);
+  
+  arr->toks[arr->len] = *tok;
+  arr->len++;
+
+  tok->tag = TSCFG_TOK_INVALID;
+  tok->str = NULL;
+  tok->len = 0;
+}
+
+/*
+ * Append tokens from src to dst and clear src
+ */
+tscfg_rc tscfg_tok_array_concat(tscfg_tok_array *dst, tscfg_tok_array *src) {
+  assert(dst != src);
+  tscfg_rc rc = tscfg_tok_array_expand(dst, dst->len + src->len);
+  TSCFG_CHECK(rc);
+
+  memcpy(&dst->toks[dst->len], &src->toks[0],
+         sizeof(src->toks[0]) * (size_t)src->len);
+
+  dst->len += src->len;
+  src->len = 0;
+  return TSCFG_OK;
+}
+
+/*
+ * Free strings of any tokens.
+ */
+void tscfg_tok_array_free(tscfg_tok_array *toks, bool free_array) {
+  for (int i = 0; i < toks->len; i++) {
+    tscfg_tok_free(&toks->toks[i]);
+  }
+  toks->len = 0;
+
+  if (free_array && toks->toks != NULL) {
+    free(toks->toks);
+    toks->toks = NULL;
+    toks->size = 0;
+  }
 }

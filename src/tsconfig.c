@@ -557,14 +557,8 @@ static tscfg_rc value(ts_parse_state *state) {
 
         pop_toks(state, 1, true);
 
-        ok = state->reader.arr_start(state->reader_state);
-        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
-
         rc = parse_hocon_arr_body(state);
         TSCFG_CHECK(rc);
-
-        ok = state->reader.arr_end(state->reader_state);
-        TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
 
         rc = expect_tag(state, TSCFG_TOK_CLOSE_SQUARE,
                         "Expected close square bracket");

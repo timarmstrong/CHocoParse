@@ -75,11 +75,13 @@ static bool tread_obj_end(void *s) {
 
 static bool tread_arr_start(void *s) {
   // TODO: implement
+  fprintf(stderr, "arr_start\n");
   return true;
 }
 
 static bool tread_arr_end(void *s) {
   // TODO: implement
+  fprintf(stderr, "arr_end\n");
   return true;
 }
 

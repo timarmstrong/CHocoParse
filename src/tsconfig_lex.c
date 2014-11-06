@@ -786,7 +786,7 @@ static tscfg_rc extract_sub_start(tscfg_lex_state *lex, tscfg_tok *tok) {
   }
 
   tscfg_tok_tag tag;
-  int chars;
+  size_t chars;
   if (got == 2 && buf[1] == '?') {
     tag = TSCFG_TOK_OPEN_OPT_SUB;
     chars = 2;

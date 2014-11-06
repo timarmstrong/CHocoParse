@@ -522,10 +522,15 @@ static tscfg_rc value(ts_parse_state *state) {
 
         bool option = (tok.tag == TSCFG_TOK_OPEN_OPT_SUB);
 
-        ok = state->reader.var_sub(state->reader_state, );
+        ok = state->reader.var_sub(state->reader_state, path_toks.toks,
+                                   path_toks.len, option);
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
 
-        // TODO: close brace
+        rc = expect_tag(state, TSCFG_TOK_CLOSE_BRACE,
+                        "Expected close brace for substitution");
+        TSCFG_CHECK_GOTO(rc, cleanup);
+
+        pop_toks(state, 1, true);
         break;
       }
 

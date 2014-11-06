@@ -46,6 +46,7 @@ typedef enum {
   TSCFG_TOK_TRUE,
   TSCFG_TOK_FALSE,
   TSCFG_TOK_NULL,
+  TSCFG_TOK_INCLUDE,
 
   /* Literals and variables: include string */
   TSCFG_TOK_NUMBER, // Numeric token, text is stored in str

@@ -222,36 +222,46 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
   while (true) {
     // Check for close brace or EOF.
     // Whitespace should already be consumed.
-    tscfg_tok_tag tag;
-    rc = peek_tag(state, &tag);
+    tscfg_tok tok;
+    int got;
+    rc = peek_tok(state, &tok, 1, &got);
     TSCFG_CHECK(rc);
-    if (tag == TSCFG_TOK_CLOSE_BRACE ||
-        tag == TSCFG_TOK_EOF) {
+    if (got == 0 ||
+        tok.tag == TSCFG_TOK_CLOSE_BRACE ||
+        tok.tag == TSCFG_TOK_EOF) {
       break;
     }
+    
+    // Include is handled as a special case of an unquoted string
+    if (tok.tag == TSCFG_TOK_UNQUOTED &&
+        tok.len == 7 && memcmp("include", tok.str, 7) == 0) {
+      pop_toks(state, 1, true);
 
-    // TODO: check for include file and merge object
-    tok_array key_toks;
-    rc = key(state, &key_toks);
-    TSCFG_CHECK(rc);
+      // TODO: check for quoted string, or file()/url()/classpath()
+      PARSE_REPORT_ERR(state, "HOCON includes not yet supported");
+      return TSCFG_ERR_UNIMPL;
+    } else {
+      tok_array key_toks;
+      rc = key(state, &key_toks);
+      TSCFG_CHECK(rc);
 
-    // Separator before value
-    tscfg_tok_tag sep;
-    rc = kv_sep(state, &sep);
-    TSCFG_CHECK(rc);
+      // Separator before value
+      tscfg_tok_tag sep;
+      rc = kv_sep(state, &sep);
+      TSCFG_CHECK(rc);
 
-    ok = state->reader.key_val_start(state->reader_state,
-                      key_toks.toks, key_toks.len, sep);
-    key_toks = EMPTY_TOK_ARRAY; // Ownership of array passed in
-    TSCFG_COND(ok, TSCFG_ERR_READER);
+      ok = state->reader.key_val_start(state->reader_state,
+                        key_toks.toks, key_toks.len, sep);
+      key_toks = EMPTY_TOK_ARRAY; // Ownership of array passed in
+      TSCFG_COND(ok, TSCFG_ERR_READER);
 
-    // Parse value
-    rc = value(state);
-    TSCFG_CHECK(rc);
+      // Parse value
+      rc = value(state);
+      TSCFG_CHECK(rc);
 
-    ok = state->reader.key_val_end(state->reader_state);
-    TSCFG_COND(ok, TSCFG_ERR_READER);
-
+      ok = state->reader.key_val_end(state->reader_state);
+      TSCFG_COND(ok, TSCFG_ERR_READER);
+    }
   }
 
   ok = state->reader.obj_end(state->reader_state);
@@ -335,7 +345,7 @@ static tscfg_rc kv_sep(ts_parse_state *state, tscfg_tok_tag *tag) {
       return TSCFG_ERR_SYNTAX;
     default:
       PARSE_REPORT_ERR(state, "Expected key/value separator or open brace, "
-                       "but got something else.");
+                       "but got token: %s", tscfg_tok_tag_name(maybe_tag));
       return TSCFG_ERR_SYNTAX;
   }
 

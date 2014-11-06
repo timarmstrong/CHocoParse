@@ -47,6 +47,8 @@ const char *tscfg_tok_tag_name(tscfg_tok_tag tag) {
       return "TOK_FALSE";
     case TSCFG_TOK_NULL:
       return "TOK_NULL";
+    case TSCFG_TOK_INCLUDE:
+      return "TOK_INCLUDE";
     case TSCFG_TOK_NUMBER:
       return "TOK_NUMBER";
     case TSCFG_TOK_UNQUOTED:

@@ -70,4 +70,6 @@ typedef struct {
 
 const char *tscfg_tok_tag_name(tscfg_tok_tag tag);
 
+void tscfg_tok_free(tscfg_tok *tok);
+
 #endif // __TSCONFIG_TOK_H

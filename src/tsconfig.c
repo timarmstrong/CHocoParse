@@ -242,7 +242,7 @@ static tscfg_rc parse_hocon_obj_body(ts_parse_state *state) {
 
     ok = state->reader.key_val_start(state->reader_state,
                       key_toks.toks, key_toks.len, sep);
-    free(key_toks.toks);
+    key_toks = EMPTY_TOK_ARRAY; // Ownership of array passed in
     TSCFG_COND(ok, TSCFG_ERR_READER);
 
     // Parse value
@@ -506,9 +506,10 @@ static tscfg_rc value(ts_parse_state *state) {
         rc = emit_toks(state, &ws_toks, true);
         TSCFG_CHECK_GOTO(rc, cleanup);
 
+        pop_toks(state, 1, false);
+
         ok = state->reader.token(state->reader_state, &tok);
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
-        pop_toks(state, 1, false);
         break;
 
       case TSCFG_TOK_OPEN_SUB:
@@ -524,6 +525,7 @@ static tscfg_rc value(ts_parse_state *state) {
 
         ok = state->reader.var_sub(state->reader_state, path_toks.toks,
                                    path_toks.len, option);
+        path_toks = EMPTY_TOK_ARRAY; // Ownership of array passed in
         TSCFG_COND_GOTO(ok, rc, TSCFG_ERR_READER, cleanup);
 
         rc = expect_tag(state, TSCFG_TOK_CLOSE_BRACE,
@@ -831,10 +833,7 @@ static tscfg_rc append_toks(tok_array *dst, tok_array *src) {
  */
 static void free_toks(tok_array *toks, bool free_array) {
   for (int i = 0; i < toks->len; i++) {
-    tscfg_tok *tok = &toks->toks[i];
-    if (tok->str != NULL) {
-      free(tok->str);
-    }
+    tscfg_tok_free(&toks->toks[i]);
   }
   toks->len = 0;
 
@@ -865,7 +864,7 @@ static void pop_toks(ts_parse_state *state, int count, bool free_toks) {
   // Cleanup memory first
   if (free_toks) {
     for (int i = 0; i < count; i++) {
-      free(state->toks.toks[i].str);
+      tscfg_tok_free(&state->toks.toks[i]);
     }
   }
 

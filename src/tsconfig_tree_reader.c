@@ -94,30 +94,38 @@ static bool tread_key_val_start(void *s, tscfg_tok *key_toks, int nkey_toks,
     }
     fprintf(stderr, "%s \"%.*s\"", tscfg_tok_tag_name(key_toks[i].tag),
                 (int)key_toks[i].len, key_toks[i].str);
+
+    tscfg_tok_free(&key_toks[i]);
   }
 
   fprintf(stderr, "] sep=%s\n", tscfg_tok_tag_name(sep));
+
+  free(key_toks);
   return true;
 }
 
 static bool tread_key_val_end(void *s) {
   // TODO: implement
+  fprintf(stderr, "key_val_end\n");
   return true;
 }
 
 static bool tread_val_start(void *s) {
   // TODO: implement
+  fprintf(stderr, "val_start\n");
   return true;
 }
 
 static bool tread_val_end(void *s) {
   // TODO: implement
+  fprintf(stderr, "val_end\n");
   return true;
 }
 
 static bool tread_token(void *s, tscfg_tok *tok) {
   fprintf(stderr, "tok: %s \"%.*s\"\n", tscfg_tok_tag_name(tok->tag),
               (int)tok->len, tok->str);
+  tscfg_tok_free(tok);
   return true;
 }
 
@@ -131,9 +139,14 @@ static bool tread_var_sub(void *s, tscfg_tok *toks, int ntoks, bool optional) {
     }
     fprintf(stderr, "%s \"%.*s\"", tscfg_tok_tag_name(toks[i].tag),
                 (int)toks[i].len, toks[i].str);
+
+    tscfg_tok_free(&toks[i]);
   }
 
   fprintf(stderr, "]\n");
+
+  free(toks);
+
   return true;
 }
 

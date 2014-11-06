@@ -47,7 +47,7 @@ typedef struct {
    * of tokens, arrays, and objects.
    * key_toks: these can be true/false/null, quoted/unquoted strings,
    *   numbers, and whitespace tokens. Whitespace is never the first
-   *   or last token.
+   *   or last token.  Ownership of array is passed in
    */
   bool (*key_val_start)(void *s, tscfg_tok *key_toks, int nkey_toks,
                          tscfg_tok_tag sep);

@@ -61,3 +61,12 @@ const char *tscfg_tok_tag_name(tscfg_tok_tag tag) {
       return "(unknown)";
   }
 }
+
+void tscfg_tok_free(tscfg_tok *tok) {
+  if (tok->str != NULL) {
+    free(tok->str);
+  }
+  tok->tag = TSCFG_TOK_INVALID;
+  tok->str = NULL;
+  tok->len = 0;
+}
